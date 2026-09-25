@@ -11,16 +11,21 @@ behind the ENS card's "Enhanced Access Control... central, not cosmetic"
 requirement, and it's what `apps/web`'s `createOnChainSubnameClaimer` will
 call once deployed.
 
-## Status: step 1 run successfully; step 2 fixed, awaiting re-run; steps 3-6 not yet run
+## Status: step 1 run successfully; step 2 still reverting, root cause not yet found; steps 3-6 not yet run
 
-Everything needed to deploy is now specified — no more guessed interfaces.
 Step 1 has been broadcast to Sepolia (see `docs/engineering-log.md` for the
-deployed `UserRegistry` address). Step 2 previously reverted with no reason
-given — root cause was an invalid role bitmap in its `initialize()` call,
-now fixed (see the script's own comment) but not yet re-run against Sepolia.
-Steps 3-6 are written but not yet run — same network-access constraint as
-`sapore/scripts/register-sepolia-ens`: this session has no RPC access, so
-every step below runs on your machine.
+deployed `UserRegistry` address). Step 2 has reverted twice with zero revert
+data. The `initialize()` signature and role bitmap are now both confirmed
+correct against the "Permissioned Resolver" doc's own Reference section and
+its own worked example — see the script's header comment and
+`docs/engineering-log.md`'s two most recent entries for the full diagnosis
+history, including a walked-back claim from earlier today. Current
+hypothesis: a CREATE2 address collision, since the resolver's proxy address
+is fully determined by `(owner, version)` and this repo's throwaway signing
+key has been exposed in chat. `ENS_RESOLVER_SALT_VERSION` is there to test
+that directly. Steps 3-6 are written but not yet run — same network-access
+constraint as `sapore/scripts/register-sepolia-ens`: this session has no RPC
+access, so every step below runs on your machine.
 
 ### Step 1 — deploy the UserRegistry proxy, and point `sapore.eth` at it
 

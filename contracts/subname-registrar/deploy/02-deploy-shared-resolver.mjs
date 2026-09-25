@@ -6,15 +6,22 @@
  * in docs/engineering-log.md (the alternative being a separate resolver
  * deployed per Chef). One deployment total, not one per Chef.
  *
- * What this does NOT yet do: delegate a specific Chef write access to their
- * own node on this resolver. ENSv2's docs name the mechanism — "delegated
- * per name or per record key via the resolver's authorize*Roles functions"
- * — but the exact function signature is on the "Permissioned Resolver"
- * contract page, not yet read in this session. Until that's read, Sapore
- * (as this resolver's deployer/owner, holding ALL_ROLES) is the only account
- * that can call writeChefRecords() against it — which is a real, demoable
- * intermediate state (Sapore setting records on the Chef's behalf), just not
- * the end state the ENS card wants (the Chef writing their own).
+ * Per-Chef delegation (a specific Chef's wallet writing only their own name)
+ * is now wired — see 03-authorize-chef.mjs, built from the "Permissioned
+ * Resolver" doc's "Delegating a Single Text Key" example. This script only
+ * deploys the resolver itself.
+ *
+ * This call has reverted twice with zero revert data, and the calldata is
+ * now confirmed correct both times (matches the doc's own "Deploying a
+ * Resolver Proxy" example byte-for-byte, selector included — see
+ * docs/engineering-log.md for the full diagnosis history). If it reverts
+ * again, ENS_RESOLVER_SALT_VERSION below is the next thing to try: the
+ * resolver's CREATE2 address is fully determined by (owner, version), so if
+ * something already occupies that address for version 0 — including,
+ * worst case, someone else using this repo's throwaway key, which has been
+ * pasted in chat and should be treated as compromised — deployProxy reverts
+ * on the collision. Bumping the version gets a fresh address and would
+ * confirm or rule this out directly.
  *
  * Usage: same as 01-deploy-user-registry.mjs (same package.json / .env).
  */
@@ -30,6 +37,7 @@ import {
   parseAbi,
   parseEventLogs,
   stringToHex,
+  zeroHash,
 } from 'viem'
 import { privateKeyToAccount } from 'viem/accounts'
 import { sepolia } from 'viem/chains'
@@ -59,22 +67,21 @@ const verifiableFactoryAbi = parseAbi([
   'event ProxyDeployed(address indexed sender, address indexed proxyAddress, uint256 salt, address implementation)',
 ])
 
-const resolverInitAbi = parseAbi([
+const permissionedResolverAbi = parseAbi([
   'function initialize(address admin, uint256 roleBitmap, bytes[] setters)',
+  'function recordVersions(bytes32 node) view returns (uint256)',
 ])
 
-// Unlike 01-deploy-user-registry.mjs's ALL_ROLES (a blanket "every 4th bit"
-// pattern lifted from the Verifiable Factory doc's generic example), the
-// Permissioned Resolver's roles are NOT laid out on every 4th bit up to 252 —
-// its "EAC Integration" doc page defines exactly these roles, each with an
-// admin variant at `role << 128`:
-//   ROLE_SET_ADDR=1<<0     ROLE_SET_TEXT=1<<4        ROLE_SET_CONTENTHASH=1<<8
-//   ROLE_SET_PUBKEY=1<<12  ROLE_SET_ABI=1<<16        ROLE_SET_INTERFACE=1<<20
-//   ROLE_SET_NAME=1<<24    ROLE_SET_ALIAS=1<<28      ROLE_CLEAR=1<<32
-//   ROLE_SET_DATA=1<<36    ROLE_UPGRADE=1<<124
-// The old blanket bitmap also set bits 40, 44, 48, ... 120 — positions the
-// resolver doesn't define at all. That's the actual cause of the "reverted,
-// no reason given" failure: initialize() rejects an unrecognized bit.
+// The doc's own "Deploying a Resolver Proxy" example uses a blanket
+// "every 4th bit" pattern (0x1111...1111) here — the same constant
+// 01-deploy-user-registry.mjs uses for a *different* contract. Confirmed via
+// the "Permissioned Resolver" doc's Reference section that the real
+// initialize(admin, roleBitmap, setters) signature matches what's used
+// below, so this bitmap was NOT the cause of the reverts seen so far —
+// still built from just the resolver's real roles (0, 4, 8, 12, 16, 20, 24,
+// 28, 32, 36, 124, each with an admin variant at `+128`) rather than the
+// doc's over-inclusive blanket, since that's a strictly better choice
+// either way, not a fix for anything.
 const RESOLVER_ROLE_BITS = [0, 4, 8, 12, 16, 20, 24, 28, 32, 36, 124]
 const RESOLVER_ALL_ROLES = RESOLVER_ROLE_BITS.reduce(
   (bitmap, bit) => bitmap | (1n << BigInt(bit)) | (1n << BigInt(bit + 128)),
@@ -98,7 +105,11 @@ async function main() {
   // Salt scheme per the Verifiable Factory doc: keccak256("OwnedResolver",
   // owner, version) — one resolver per owner. "Owner" here is Sapore's own
   // admin account, since this is Sapore's shared resolver, not a per-Chef one.
-  const version = 0n
+  //
+  // The resulting proxy address is fully determined by (owner, version) —
+  // see the header comment. Override via ENS_RESOLVER_SALT_VERSION if
+  // version 0's address turns out to be occupied by something else.
+  const version = BigInt(process.env.ENS_RESOLVER_SALT_VERSION || '0')
   const resolverSalt = BigInt(
     keccak256(
       encodeAbiParameters(
@@ -107,9 +118,10 @@ async function main() {
       ),
     ),
   )
+  console.log(`Salt version: ${version} (salt: ${resolverSalt})\n`)
 
   const resolverInitData = encodeFunctionData({
-    abi: resolverInitAbi,
+    abi: permissionedResolverAbi,
     functionName: 'initialize',
     args: [account.address, RESOLVER_ALL_ROLES, []],
   })
@@ -126,6 +138,30 @@ async function main() {
       'One of the addresses above has no deployed code on this chain — ' +
         'wrong address, or wrong network. Not a revert, a bad address.',
     )
+  }
+
+  // Calling a plain view function directly on the implementation (not
+  // through a proxy) rules out "PERMISSIONED_RESOLVER_IMPL is the wrong
+  // address" as a cause: if this address doesn't actually speak the
+  // Permissioned Resolver ABI, this read fails differently than the
+  // deployProxy revert below, which narrows things down.
+  try {
+    const recordVersion = await client.readContract({
+      address: PERMISSIONED_RESOLVER_IMPL,
+      abi: permissionedResolverAbi,
+      functionName: 'recordVersions',
+      args: [zeroHash],
+    })
+    console.log(
+      `Implementation responds to recordVersions() as expected: ${recordVersion}\n`,
+    )
+  } catch (readErr) {
+    console.error(
+      '\nImplementation address does not behave like a Permissioned',
+      'Resolver — recordVersions() read failed:',
+    )
+    console.error(readErr.shortMessage || readErr.message)
+    throw readErr
   }
 
   console.log('Deploying shared Permissioned Resolver proxy...')
@@ -170,9 +206,9 @@ async function main() {
     'SaporeChefRegistrar.register(label, chefWallet, resolverAddress).',
   )
   console.log(
-    '\nNot yet wired: delegating a specific Chef write access to only their\n' +
-      'own node on this resolver (authorize*Roles) — needs the Permissioned\n' +
-      'Resolver contract page, not yet read in this session.',
+    `\nAdd SHARED_RESOLVER=${resolverAddress} to .env, then run\n` +
+      '03-authorize-chef.mjs <alias> <chefWallet> once a Chef has registered,\n' +
+      'to delegate that Chef write access to only their own name.',
   )
 }
 

@@ -384,3 +384,43 @@ calls). Granted roles are just `ROLE_SET_ADDR | ROLE_SET_TEXT` — the two
 record types `writeChefRecords()` actually writes — same "minimum
 sufficient" reasoning as the World credential and the registrar's own role
 bitmap, applied a third time.
+
+
+### Thu 25 Sept, later still (correction) — the role-bitmap fix wasn't the real fix
+
+Santino re-ran `02-deploy-shared-resolver.mjs` with the bitmap fix applied —
+same revert, zero revert data, same `raw: '0x'`. Decoded the new calldata by
+hand again: it round-trips to exactly the intended `RESOLVER_ALL_ROLES`
+value, so the bitmap fix was correctly applied but didn't fix anything.
+
+Santino then pasted the *entire* "Permissioned Resolver" page, including the
+"Reference" section that the previous partial paste (EAC Integration + Code
+Examples only) never reached. Two things fell out of reading it in full:
+
+1. **The `initialize(admin, roleBitmap, setters)` signature was right all
+   along** — the Reference section's own Write Functions list confirms it
+   verbatim, selector included (`toFunctionSelector` on the signature
+   produces `0x7058b559`, matching every revert's calldata exactly). Not a
+   guess that happened to work; a guess that turned out correct, confirmed
+   after the fact — worth being honest about the distinction.
+2. **The doc's own "Deploying a Resolver Proxy" worked example** (which,
+   it turns out, exists on the *Verifiable Factory* page, not the resolver
+   page — already read earlier in the session, its resolver-specific example
+   just hadn't been connected to this bug yet) uses the exact same blanket
+   `ALL_ROLES = 0x1111...1111` this script started with, the exact same
+   salt scheme, the exact same call shape. Our original code was already a
+   byte-for-byte match of the reference implementation. The role-bitmap
+   "fix" from earlier today was real (narrower is still strictly better
+   practice) but not a fix for this revert — the revert survives even the
+   doc's own canonical example.
+
+So the cause is something the calldata can't reveal: a mundane wrong-address
+possibility (added a direct `recordVersions()` read on
+`PERMISSIONED_RESOLVER_IMPL` to rule that out cheaply), or a CREATE2
+collision at the resolver's address, which is fully determined by
+`(owner, version)`. Worth stating plainly: this repo's throwaway
+`ENS_OWNER_PRIVATE_KEY` has been pasted in this chat and should be treated
+as compromised — if anyone else used it to deploy anything at that exact
+predictable address, this call would revert on the collision with exactly
+this symptom. Added `ENS_RESOLVER_SALT_VERSION` as an env override so
+Santino can test a fresh address directly rather than guess further.
