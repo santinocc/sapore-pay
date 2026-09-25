@@ -10,6 +10,22 @@ const schema = z.object({
     .string()
     .default('http://localhost:3001/.well-known/jwks.json'),
   SAPORE_JWT_ISSUER: z.string().default('sapore'),
+
+  // ENSv2 Sepolia — see contracts/subname-registrar/README.md and
+  // docs/engineering-log.md for how these were deployed and verified.
+  // No default for the private key: routes that need it report
+  // "not configured" rather than the service refusing to start, matching
+  // how WORLD_APP_ID is handled.
+  SEPOLIA_RPC_URL: z
+    .string()
+    .default('https://ethereum-sepolia-rpc.publicnode.com'),
+  ENS_BACKEND_PRIVATE_KEY: z.string().default(''),
+  ENS_CHEF_REGISTRAR: z
+    .string()
+    .default('0x45347E1a412a16f494d945Ed3402A773A07fc5D1'),
+  ENS_SHARED_RESOLVER: z
+    .string()
+    .default('0x0356d23bcfBe2Cb42508542c930C7A2cCa352858'),
 })
 
 export type Config = z.infer<typeof schema>
