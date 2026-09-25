@@ -8,10 +8,17 @@
  * records. Each stage's own demo controls pick the outcome the next action
  * returns, so any state — including the rejection paths — is reachable on
  * purpose, not by breaking something live.
+ *
+ * The ENS claim and payout steps can each run in "Simulated" or
+ * "Real (Sepolia)" mode. Real mode calls apps/service, which holds the
+ * deployed SaporeChefRegistrar/resolver addresses and signs with Sapore's
+ * backend key — see ensClaim.ts / recordWriter.ts for why that split exists.
+ * World ID stays simulated-only: WORLD_APP_ID isn't configured yet.
  */
 
 import { useMemo, useState } from 'react'
 import {
+  createOnChainSubnameClaimer,
   createSimulatedSubnameClaimer,
   type SimulatedClaimScenario,
 } from './lib/ensClaim'
@@ -20,6 +27,7 @@ import {
   type SimulatedScenario,
 } from './lib/humanVerifier'
 import {
+  createOnChainRecordWriter,
   createSimulatedRecordWriter,
   type SimulatedRecordScenario,
 } from './lib/recordWriter'
@@ -29,10 +37,17 @@ import { PayoutRecords } from './screens/PayoutRecords'
 import './theme.css'
 import './app.css'
 
+const SERVICE_URL = import.meta.env.VITE_SERVICE_URL ?? 'http://localhost:4000'
+
+/** The demo's stand-in Chef wallet, until Privy gives each Chef their own. */
+const DEMO_CHEF_ADDRESS = '0x0d9f3D27e8F4EEBC80e445a59dAD5A9173d951ab'
+
 type Step =
   | { kind: 'onboarding' }
   | { kind: 'ens-claim' }
   | { kind: 'payout'; fullName: string }
+
+type Mode = 'simulated' | 'real'
 
 const WORLD_SCENARIOS: { id: SimulatedScenario; label: string }[] = [
   { id: 'verified', label: 'Success' },
@@ -66,20 +81,28 @@ export function App() {
     [worldScenario],
   )
 
+  const [claimMode, setClaimMode] = useState<Mode>('simulated')
   const [claimScenario, setClaimScenario] =
     useState<SimulatedClaimScenario>('claimed')
   const [claimRun, setClaimRun] = useState(0)
   const claimer = useMemo(
-    () => createSimulatedSubnameClaimer(claimScenario),
-    [claimScenario],
+    () =>
+      claimMode === 'real'
+        ? createOnChainSubnameClaimer({ serviceUrl: SERVICE_URL })
+        : createSimulatedSubnameClaimer(claimScenario),
+    [claimMode, claimScenario],
   )
 
+  const [recordMode, setRecordMode] = useState<Mode>('simulated')
   const [recordScenario, setRecordScenario] =
     useState<SimulatedRecordScenario>('written')
   const [recordRun, setRecordRun] = useState(0)
   const recordWriter = useMemo(
-    () => createSimulatedRecordWriter(recordScenario),
-    [recordScenario],
+    () =>
+      recordMode === 'real'
+        ? createOnChainRecordWriter({ serviceUrl: SERVICE_URL })
+        : createSimulatedRecordWriter(recordScenario),
+    [recordMode, recordScenario],
   )
 
   return (
@@ -114,15 +137,15 @@ export function App() {
         )}
         {step.kind === 'ens-claim' && (
           <EnsClaim
-            key={`claim-${claimScenario}-${claimRun}`}
+            key={`claim-${claimMode}-${claimScenario}-${claimRun}`}
             claimer={claimer}
-            ownerAddress="0x0d9f3D27e8F4EEBC80e445a59dAD5A9173d951ab"
+            ownerAddress={DEMO_CHEF_ADDRESS}
             onClaimed={(fullName) => setStep({ kind: 'payout', fullName })}
           />
         )}
         {step.kind === 'payout' && (
           <PayoutRecords
-            key={`records-${recordScenario}-${recordRun}`}
+            key={`records-${recordMode}-${recordScenario}-${recordRun}`}
             writer={recordWriter}
             fullName={step.fullName}
           />
@@ -141,11 +164,33 @@ export function App() {
             {step.kind === 'onboarding' &&
               'World ID is simulated until the app id is configured.'}
             {step.kind === 'ens-claim' &&
-              'sapore.eth is real (ENSv2 Sepolia); subname claiming is simulated pending the contract-developer guide.'}
+              (claimMode === 'real'
+                ? `Calls ${SERVICE_URL} — a real SaporeChefRegistrar.register() on ENSv2 Sepolia, signed by Sapore's backend.`
+                : 'Simulated. Switch to Real (Sepolia) to hit the deployed SaporeChefRegistrar.')}
             {step.kind === 'payout' &&
-              'Record writing is real code (ensRecords.ts) — simulated here only because no resolver exists on a claimed subname yet.'}
+              (recordMode === 'real'
+                ? `Calls ${SERVICE_URL} — a real writeChefRecords() on ENSv2 Sepolia, signed by Sapore's backend (not the Chef's own wallet yet — no Privy integration).`
+                : 'Simulated. Switch to Real (Sepolia) to write real resolver records.')}
           </span>
         </p>
+        {step.kind === 'ens-claim' && (
+          <ModeToggle
+            mode={claimMode}
+            onChange={(m) => {
+              setClaimMode(m)
+              setClaimRun((n) => n + 1)
+            }}
+          />
+        )}
+        {step.kind === 'payout' && (
+          <ModeToggle
+            mode={recordMode}
+            onChange={(m) => {
+              setRecordMode(m)
+              setRecordRun((n) => n + 1)
+            }}
+          />
+        )}
         <div className="demo__row">
           {step.kind === 'onboarding' &&
             WORLD_SCENARIOS.map((s) => (
@@ -163,6 +208,7 @@ export function App() {
               </button>
             ))}
           {step.kind === 'ens-claim' &&
+            claimMode === 'simulated' &&
             CLAIM_SCENARIOS.map((s) => (
               <button
                 key={s.id}
@@ -178,6 +224,7 @@ export function App() {
               </button>
             ))}
           {step.kind === 'payout' &&
+            recordMode === 'simulated' &&
             RECORD_SCENARIOS.map((s) => (
               <button
                 key={s.id}
@@ -210,6 +257,31 @@ export function App() {
         <span>Tempo · Privy · World ID · ENSv2</span>
       </footer>
     </div>
+  )
+}
+
+function ModeToggle({
+  mode,
+  onChange,
+}: {
+  mode: Mode
+  onChange: (mode: Mode) => void
+}) {
+  return (
+    <fieldset className="demo__row demo__fieldset">
+      <legend className="sr-only">Data source</legend>
+      {(['simulated', 'real'] as const).map((m) => (
+        <button
+          key={m}
+          type="button"
+          className={`demo__chip${mode === m ? ' is-active' : ''}`}
+          aria-pressed={mode === m}
+          onClick={() => onChange(m)}
+        >
+          {m === 'simulated' ? 'Simulated' : 'Real (Sepolia)'}
+        </button>
+      ))}
+    </fieldset>
   )
 }
 

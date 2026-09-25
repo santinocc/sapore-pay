@@ -490,3 +490,145 @@ tx:      0xcb1a8fc941d6b668363e7b1d37030fb28773390dc1e60ca589b60f976e5ef45e
 Next: `SaporeChefRegistrar.sol` via Foundry (step 3), then authorize it on
 `UserRegistry` (step 4), then a real Chef registration to exercise steps 5-6
 (`isAvailable`/`register`/`03-authorize-chef.mjs`) end to end.
+
+
+### Thu 25 Sept, later still — first real Foundry compile, and a caught access-control gap
+
+`forge build` compiled clean once Foundry was actually installed
+(`foundryup`) — but the very first attempt failed on `@notice` used on a
+file-level (free) variable, which Solidity's NatSpec rules don't allow
+(only `@dev` is valid there). One-line fix.
+
+The second `forge build` succeeded with two lint warnings, both real:
+- `missing-zero-check` on the constructor's `beneficiary` param — added a
+  guard, since it's immutable and a zero mistake would be permanent.
+- `reentrancy-events` on emitting `ChefNameRegistered` after
+  `REGISTRY.register()` — accepted as-is (documented inline) since the
+  event's `tokenId` only exists after that call returns, and the call is
+  register()'s own trusted parent contract, not attacker-controlled.
+
+While writing that second comment, re-reading `register()` turned up
+something forge's linter didn't flag but should have been obvious on
+review: **the function had no access control at all.** The doc comments
+claimed "only Sapore's backend (holding ROLE_REGISTRAR) can call
+register()" — true of who can call the *underlying* `UserRegistry.register()`
+(restricted to ROLE_REGISTRAR holders, which this contract will hold once
+step 4 runs), but `SaporeChefRegistrar.register()` itself had zero
+restriction on `msg.sender`. Anyone could have called it directly, for any
+label, for any owner, for free, completely bypassing the World ID check the
+whole product design assumes happens before this contract is ever reached.
+
+Fixed before anything was deployed (constructor args are immutable, so this
+had to be caught now or never): added a `BACKEND` immutable address and an
+`Unauthorized()` revert in `register()`. Constructor now takes a 5th arg;
+`sapore.eth`'s admin key is used for it in this deployment since that's what
+Sapore's backend controls throughout the event, though a production
+deployment would want a dedicated backend signer with a narrower blast
+radius than the account that also owns `sapore.eth` and the shared resolver.
+
+Not yet re-run through `forge build` after this change or deployed.
+
+
+### Thu 25 Sept, later still — SaporeChefRegistrar deployed
+
+`forge create` succeeded after the access-control fix and a re-`forge build`
+(clean except the accepted reentrancy-events warning).
+
+```
+SaporeChefRegistrar — ENSv2 Sepolia
+address: 0x45347E1a412a16f494d945Ed3402A773A07fc5D1
+tx:      0x5080ac0f18f586fc38ed376ef74348090f0195d5ff17a6228766a04f4f058feb
+constructor args: registry=0x9a932e911c7FD7DfD54d1B11Ef4fE0c9aa46862d,
+  paymentToken=0xBA11ebdB3f9a2c5946D8629517f06364E53A2E10 (MockUSDC),
+  beneficiary=backend=0x0d9f3D27e8F4EEBC80e445a59dAD5A9173d951ab (sapore.eth's admin key), price=0
+```
+
+Before granting it `ROLE_REGISTRAR` (step 4), checked `grantRootRoles` and
+`ROLE_REGISTRAR`'s bit value against verified Sepolia source
+(`EnhancedAccessControl.sol`, `IEnhancedAccessControl.sol`,
+`RegistryRolesLib.sol`) rather than trust the README's existing snippet —
+both turned out correct as documented, unlike the resolver's `initialize()`.
+Wrote `04-authorize-registrar.mjs` (matching the pattern of scripts 01-03)
+to replace the README's bare TypeScript snippet with something actually
+runnable; dry-run tested, not yet run against Sepolia.
+
+
+### Thu 25 Sept, later still — registrar authorized, register-chef script added
+
+`04-authorize-registrar.mjs` ran clean: `SaporeChefRegistrar`
+(`0x45347E1a412a16f494d945Ed3402A773A07fc5D1`) now holds `ROLE_REGISTRAR` on
+`UserRegistry`, tx `0xa232aca1c72e8e52689813c566ed12f0e6c6686bb34e93850b8ac13e795c89a9`.
+
+Wrote `05-register-chef.mjs` for step 5 — the first script in this whole
+deploy sequence whose ABI didn't need any doc/Etherscan verification, since
+`SaporeChefRegistrar.sol` is our own source, compiled and deployed from this
+repo. Checks `isAvailable`, calls `register()`, parses the
+`ChefNameRegistered` event for the minted `tokenId`. Dry-run tested, not yet
+run against Sepolia — that run is what finally exercises the entire
+pipeline (registry → resolver → registrar → a real Chef name → delegated
+write access via 03-authorize-chef.mjs) end to end for the first time.
+
+
+### Thu 25 Sept, later still — first Chef registered, pipeline verified end to end
+
+`05-register-chef.mjs` ran clean on the first try:
+
+```
+marco.sapore.eth — ENSv2 Sepolia
+tokenId: 38611655076938727590367281247710421354087380433560551197690241304350467031040
+tx:      0xc934cce82a7178413fec43ba981ec065e352194ff81eaf4a922e491f96d85cce
+```
+
+Registry → shared resolver → registrar → a real Chef subname, all real,
+all on Sepolia. Only step 6 (delegating `marco`'s own write access via
+`03-authorize-chef.mjs`) is left to close the loop.
+
+
+### Thu 25 Sept, later still — full pipeline verified end to end
+
+`03-authorize-chef.mjs` ran clean: `0x0d9f3D27e8F4EEBC80e445a59dAD5A9173d951ab`
+can now call `setAddr`/`setText` for `marco.sapore.eth` only, tx
+`0x67f2a8e05dd8223f547eaccdd6cf9c0179a662921e06b43533e49b1502e1c837`.
+
+All six steps in `contracts/subname-registrar/README.md` have now run
+successfully against Sepolia, in order, with no simulated stand-ins:
+UserRegistry deployed → shared resolver deployed → SaporeChefRegistrar
+deployed → authorized with ROLE_REGISTRAR → a real Chef (`marco.sapore.eth`)
+registered → that Chef's write access delegated. Three real bugs were found
+and fixed along the way (an invalid role bitmap that turned out not to be
+the actual problem, a resolver `initialize()` argument-count mismatch that
+was, and a missing access-control check in `register()`), all documented
+above as they happened rather than cleaned up after the fact.
+
+Not yet done: wiring `apps/web`'s `createOnChainSubnameClaimer` (still an
+honest stub) to `SaporeChefRegistrar`, and `createOnChainRecordWriter` to
+actually call `writeChefRecords()` against `marco.sapore.eth`'s resolver
+now that write access is delegated — both are real product code changes
+left for the PR or a follow-up, not deploy-script work.
+
+
+### Thu 25 Sept, later still — apps/web wired to the deployed contracts
+
+Added a "Real (Sepolia)" mode to the ENS-claim and payout-records demo
+steps, backed by three new apps/service routes (`GET
+/ens/chef/:label/availability`, `POST /ens/chef/claim`, `POST
+/ens/chef/records`). Backend-mediated rather than client-side by
+necessity, not choice: `SaporeChefRegistrar.register()` only accepts calls
+from the address deployed as `backend`, and that key can never ship to the
+browser.
+
+Decided against building Privy embedded wallets in the same pass — a
+materially larger, separate integration (wallet creation/login UX, session
+handling, a signing flow) — in favor of shipping the real on-chain wiring
+now and sequencing Privy as the next task. Structured so nothing here needs
+rework when Privy lands: `writeChefRecords()` moved out of `apps/web` into
+the shared `@sapore-pay/ens` package (`packages/ens/src/chefRecords.ts`),
+so `apps/service` (today) and `apps/web` (once a Chef's own wallet client
+exists) call the exact same function — only `recordWriter.ts`'s
+implementation swaps from "call the backend" to "call it directly."
+
+`apps/web`'s `ensRecords.ts` is now a thin re-export of the relocated
+package. All builds (`tsc`, `vite build`) and existing test suites (20 + 2
+tests) pass; Biome lint is clean. Not yet click-tested against a running
+`apps/service` in this session — that and Privy are the two things left
+before this feature branch is fully closed out.

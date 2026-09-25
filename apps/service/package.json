@@ -12,7 +12,9 @@
   },
   "dependencies": {
     "@sapore-pay/core": "workspace:*",
+    "@sapore-pay/ens": "workspace:*",
     "express": "^4.21.0",
+    "viem": "^2.56.9",
     "zod": "^3.23.0"
   },
   "devDependencies": {

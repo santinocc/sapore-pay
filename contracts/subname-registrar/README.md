@@ -11,17 +11,22 @@ behind the ENS card's "Enhanced Access Control... central, not cosmetic"
 requirement, and it's what `apps/web`'s `createOnChainSubnameClaimer` will
 call once deployed.
 
-## Status: steps 1-2 run successfully; steps 3-6 not yet run
+## Status: all six steps run successfully — full pipeline verified on Sepolia
 
-Steps 1 and 2 have been broadcast to Sepolia (see `docs/engineering-log.md`
-for the deployed `UserRegistry` and shared resolver addresses, and its last
-few entries for step 2's diagnosis history — the documented
-`initialize(admin, roleBitmap, setters)` signature didn't match what's
-actually deployed, which only takes two arguments; the docs describe the
-*intended* interface for a contract whose own banner says "not yet final,"
-and the deployed one had already drifted). Steps 3-6 are written but not yet
-run — same network-access constraint as `sapore/scripts/register-sepolia-ens`:
-this session has no RPC access, so every step below runs on your machine.
+Every step below has been broadcast to Sepolia, in order, with a real Chef
+(`marco.sapore.eth`) registered and delegated write access at the end. See
+`docs/engineering-log.md` for all deployed addresses and tx hashes, and its
+diagnosis history for the two real bugs found and fixed along the way (a
+resolver `initialize()` argument-count mismatch, and a missing
+access-control check in `SaporeChefRegistrar.register()`) — both fixed
+before anything shipped.
+
+Not yet done: wiring `apps/web`'s `createOnChainSubnameClaimer` (still an
+honest stub) and `createOnChainRecordWriter` to these real deployed
+contracts — that's app code, not a deploy script, and is tracked
+separately from this runbook. Same network-access constraint as
+`sapore/scripts/register-sepolia-ens` applies to all scripts below: this
+session has no RPC access, so every step runs on your machine.
 
 ### Step 1 — deploy the UserRegistry proxy, and point `sapore.eth` at it
 
@@ -75,39 +80,40 @@ forge install ensdomains/contracts-v2
 forge build
 forge create src/SaporeChefRegistrar.sol:SaporeChefRegistrar \
   --rpc-url $SEPOLIA_RPC_URL --private-key $ENS_OWNER_PRIVATE_KEY --broadcast \
-  --constructor-args $USER_REGISTRY 0xBA11ebdB3f9a2c5946D8629517f06364E53A2E10 $ENS_OWNER_ADDRESS 0
+  --constructor-args $USER_REGISTRY 0xBA11ebdB3f9a2c5946D8629517f06364E53A2E10 $ENS_OWNER_ADDRESS 0 $ENS_OWNER_ADDRESS
 ```
 
 `$USER_REGISTRY` is step 1's output. Payment token is MockUSDC (per
 `scripts/register-sepolia-ens`); price is `0` — see the contract's doc
-comment for why.
+comment for why. The last argument, `backend`, is the only account allowed
+to call `register()` — using the same admin key here since it's what Sapore's
+backend controls throughout this event; a real deployment would use a
+dedicated backend signer instead.
 
 ### Step 4 — authorize the registrar
 
-```ts
-const ROLE_REGISTRAR = 1n << 0n
-await wallet.writeContract({
-  address: userRegistryAddress, // step 1's output
-  abi: [{
-    name: 'grantRootRoles', type: 'function', stateMutability: 'nonpayable',
-    inputs: [
-      { name: 'roleBitmap', type: 'uint256' },
-      { name: 'account', type: 'address' },
-    ],
-    outputs: [{ name: '', type: 'bool' }],
-  }],
-  functionName: 'grantRootRoles',
-  args: [ROLE_REGISTRAR, registrarAddress], // step 3's output
-})
+```bash
+cd ../../deploy   # back to contracts/subname-registrar/deploy
+node 04-authorize-registrar.mjs <registrarAddress>   # step 3's output
 ```
+
+Grants `SaporeChefRegistrar` `ROLE_REGISTRAR` on the `UserRegistry` —
+`grantRootRoles(roleBitmap, account)` and `ROLE_REGISTRAR`'s bit value
+(`1 << 0`) are both confirmed against verified Sepolia source
+(`EnhancedAccessControl.sol` / `RegistryRolesLib.sol`), not just docs.
 
 Not `ROLE_REGISTRAR | ROLE_RENEW` — this contract has no `renew()`.
 
-### Step 5 — verify
+### Step 5 — register a Chef
 
-`isAvailable("alice")` should read `true`; after
-`register("alice", chefWallet, resolverAddress)` (resolver = step 2's
-output), it should read `false`.
+```bash
+node 05-register-chef.mjs alice 0xChefWalletAddress
+```
+
+Checks `isAvailable`, then calls `register(label, chefWallet,
+resolverAddress)` (resolver = step 2's output) and prints the minted
+`tokenId`. Must be signed by whichever address step 3's deploy used as
+`backend` — `register()` reverts `Unauthorized()` otherwise.
 
 ### Step 6 — delegate the Chef's own write access
 

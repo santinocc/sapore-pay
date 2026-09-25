@@ -10,15 +10,14 @@
  *
  * `sapore.eth` itself is real: registered on ENSv2 Sepolia,
  * tx 0x544e55dc42d4222d6a6641bb202f492a318cec39896cf06f60fb4cbdb2736260,
- * block 11780643 (see docs/engineering-log.md). It was registered with
- * `resolver = address(0)` — no resolver set — on purpose: creating
- * `<alias>.sapore.eth` as a subname requires the Permissioned Registry /
- * subname-registrar mechanics ENSv2's "For Contract Developers" guide covers,
- * which this session hasn't read yet (network-restricted; couldn't fetch it).
- * `createOnChainSubnameClaimer` below is left as an honest stub for that
- * reason, matching how `createWorldVerifier` was stubbed before
- * WORLD_APP_ID existed. `createSimulatedSubnameClaimer` drives every state
- * until then, and stays afterward as a fast local demo path.
+ * block 11780643 (see docs/engineering-log.md). `createOnChainSubnameClaimer`
+ * below now calls apps/service's real endpoints — see
+ * contracts/subname-registrar/ for the deployed `SaporeChefRegistrar` this
+ * hits, and docs/engineering-log.md for the full deploy/verification trail.
+ * Claiming has to happen backend-side, not from the browser: `register()`
+ * reverts for anyone but the address `SaporeChefRegistrar` was deployed
+ * with as `backend`, which is Sapore's own key, never shipped to the
+ * client. `createSimulatedSubnameClaimer` stays as the fast local demo path.
  */
 
 const RESERVED_ALIASES = new Set([
@@ -102,26 +101,45 @@ export function createSimulatedSubnameClaimer(
 }
 
 /**
- * Real claimer. Deliberately incomplete — see the file header. Creating a
- * subname under `sapore.eth` needs the Permissioned Registry mechanics
- * ENSv2's contract-developer guide covers; wiring this without reading that
- * guide first would mean guessing a contract interface for something that
- * moves real ownership on-chain, which is the wrong place to guess.
+ * Real claimer. Calls apps/service, which holds the deployed
+ * `SaporeChefRegistrar` address and the backend key `register()` requires —
+ * see the file header for why that can't move to the browser.
  */
-export function createOnChainSubnameClaimer(_opts: {
-  parentName: string
+export function createOnChainSubnameClaimer(opts: {
+  serviceUrl: string
 }): SubnameClaimer {
   return {
-    async isAvailable() {
-      throw new Error(
-        'createOnChainSubnameClaimer is not implemented yet — see ensClaim.ts header.',
+    async isAvailable(alias) {
+      const label = alias.trim().toLowerCase()
+      const res = await fetch(
+        `${opts.serviceUrl}/ens/chef/${encodeURIComponent(label)}/availability`,
       )
-    },
-    async claim(): Promise<ClaimOutcome> {
-      return {
-        status: 'error',
-        message: 'Subname registration is not wired yet on this deployment.',
+      if (!res.ok) {
+        throw new Error(`Service returned ${res.status} checking availability`)
       }
+      const body = (await res.json()) as { available: boolean }
+      return body.available
+    },
+    async claim(alias, ownerAddress): Promise<ClaimOutcome> {
+      const label = alias.trim().toLowerCase()
+      let res: Response
+      try {
+        res = await fetch(`${opts.serviceUrl}/ens/chef/claim`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ label, ownerAddress }),
+        })
+      } catch (err) {
+        return { status: 'error', message: (err as Error).message }
+      }
+      if (!res.ok) {
+        const body = await res.json().catch(() => null)
+        return {
+          status: 'error',
+          message: body?.message ?? `Service returned ${res.status}`,
+        }
+      }
+      return (await res.json()) as ClaimOutcome
     },
   }
 }
