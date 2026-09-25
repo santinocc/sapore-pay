@@ -760,3 +760,46 @@ here to attach wallet creation to, and the real unification needs the
 private repo's auth system) — not a flaw to fix in this repo's narrow
 judged surface. Logged here as the confirmed direction for whenever that
 work starts, rather than built now.
+
+
+### Thu 25 Sept, later still — reconciled the signup/login design: wallet-login only
+
+Following up on the two-OTP discussion: Santino pushed further and asked
+the sharper question directly — for a crypto-only app, is a separate
+email+password+OTP signup step ever justified at all, versus just making
+Privy's wallet login *be* the signup, for both Cooker and Chef? Agreed:
+no, it isn't. Privy's email-OTP login already proves email control,
+creates identity, and creates the wallet in one step; a Sapore-specific
+credential system in front of that would prove the same thing twice for
+no benefit.
+
+Traced why the docs suggested otherwise: `docs/sapore-api-contract.md`'s
+auth section listed `POST /auth/login`/`/auth/signup`/`/auth/oauth`
+(password-based) as the primary path and `/auth/wallet-login` (SIWE,
+already Privy-shaped) as a secondary addition. That ordering reads like
+inheritance from Chefini's fiat/card-based fork ancestry rather than a
+deliberate crypto-only design — Chefini needs password auth for its
+Stripe-billed identity; Sapore doesn't.
+
+Updated `docs/sapore-api-contract.md`: `/auth/wallet-login` is now
+documented as the only auth path, handling signup and login identically
+(creates the `User` row on first sight of a wallet address, links to it
+otherwise) — no separate account-creation step, no password field. The
+password-based endpoints stay documented (they're still what's actually
+deployed) but marked legacy, same treatment as the already-deprecated
+crypto payment flow. Also flagged `PATCH /users/me/wallet` as likely
+redundant once this lands, since the "one wallet per person, both roles"
+decision means the login wallet and payout wallet are the same address by
+default.
+
+Also fixed `packages/privy/src/index.ts`'s scaffold comment, which
+planned the *reverse* direction (Privy verifying Sapore's tokens via
+"custom auth", presuming Sapore had its own login worth trusting) — kept
+as documented history, with the corrected direction (Sapore verifies
+Privy's SIWE signature, not the other way around) stated clearly above
+it.
+
+Scope note: the actual implementation is private-repo work
+(`packages/server/src/routes/auth.ts` there), out of what this repo is
+judged on. This update keeps the two repos' shared understanding
+accurate ahead of that work, rather than building it now.
