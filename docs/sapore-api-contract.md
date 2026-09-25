@@ -29,7 +29,7 @@ is what the service replaces; `apps/web` must not call it.
 | Method & path | Auth | Purpose |
 |---|---|---|
 | `POST /auth/wallet-login` `{ message, signature }` (SIWE) | — | `apps/web` sign-in with the Privy embedded wallet. Creates or links the account by verified address and returns a normal Sapore token. |
-| `POST /webhooks/pay` | HMAC (`X-Sapore-Pay-Signature: t=…,v1=…`, secret `PAY_WEBHOOK_SECRET`) | Receives `order.paid` → runs the existing fulfillment side effects (Purchase rows, XP, tier sales, push); `payout.sent` / `payout.failed` → updates `Purchase.payoutStatus` and emails. Idempotent on `orderId` / `cycle.label`. |
+| ✅ `POST /webhooks/pay` | HMAC (`X-Sapore-Pay-Signature: t=…,v1=…`, secret `PAY_WEBHOOK_SECRET`) | **Built 2026-09-25.** Receives `order.paid` → runs the marketplace's existing fulfillment side effects (purchase rows, chef earnings, tier sales, XP, referrals), idempotent on `orderId`. `payout.sent` / `payout.failed` are **rejected with 400** until the payout engine moves into this service — a 4xx stops the sender retrying, where a 200 would silently drop a money event. |
 | `POST /payments/orders` `{ recipeIds }` | Bearer | Proxies to the service's `POST /orders` with the quoted total and returns `{ orderId, memo, amount, token, escrowAddress, expiresAt }` so the client never talks to the service with a user token. (Alternative: `apps/web` calls the service directly with the Sapore token; the service verifies it via JWKS.) |
 | `GET /internal/payout/eligible-sales?cycle=YYYY-MM-DD` | `PAY_SERVICE_API_KEY` | Sales past the 2-cycle hold grouped by chef with `chefShare`, payout wallet / ENS name, terms status — the input to the batch builder. Returns `platformShare` totals for the treasury sweep. |
 | `POST /internal/payout/mark` `{ cycle, items[] }` | `PAY_SERVICE_API_KEY` | Marks `Purchase.payoutStatus` paid/failed with tx hash (or the webhook does it — pick one; webhook preferred). |
@@ -39,10 +39,15 @@ is what the service replaces; `apps/web` must not call it.
 ## Environment on the private API
 
 ```
-PAY_SERVICE_URL=            # the deployed apps/service URL
+PAY_SERVICE_URL=                # the deployed apps/service URL
 PAY_SERVICE_API_KEY=            # presented to the service
 PAY_WEBHOOK_SECRET=             # verifies webhooks from the service
 ```
+
+`PAY_WEBHOOK_SECRET` on the marketplace and `WEBHOOK_SECRET` on this service
+must be the same value byte for byte. The receiving side rejects every webhook
+when its secret is unset, so a misconfigured deploy drops events loudly rather
+than accepting unsigned ones.
 
 ## Data ownership
 

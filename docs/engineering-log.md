@@ -147,3 +147,44 @@ Also wrote `docs/hackathon/manual-tasks.md` in the private repo — every task n
 (World Developer Portal app and `chef-onboarding` action, a Sepolia ENS name, a funded Tempo
 Moderato key, Privy, Railway, a World-App-capable phone), ordered by what each one blocks.
 None of them had been done at kickoff, and the top three each block a prize outright.
+
+### 22:40 — the marketplace side of `order.paid`
+
+Built the receiving half of the integration in the private Sapore repo, since
+it needs no provider credentials and MVP item 1 cannot close without it. Three
+commits: extract the fulfilment path, the HMAC trust boundary, the route.
+
+The part worth recording is the refactor, not the route. Sapore's legacy
+paste-a-tx-hash flow already contained everything that has to happen when a
+recipe is unlocked for money — purchase rows, chef earnings, tier-sales
+counters, XP, referral settlement — as one inline block inside
+`verifyCryptoCartPayment`. The tempting move is to copy it into the webhook.
+That guarantees drift, and drift here is invisible: the symptom is a Chef's
+sale quietly not counting toward their rank six weeks later. Extracted instead
+into `resolveCartForFulfillment` (read-only, prices the cart) and
+`applyCartFulfillment` (every write), split that way because the legacy flow
+has to price the cart *before* it verifies the payment while the webhook
+arrives already verified.
+
+Design decisions in the route that are not obvious from the code:
+
+- **Idempotency is claimed before fulfilment, not after.** A `PayWebhookDelivery`
+  row with a unique key goes in first; a retry arriving mid-flight loses the
+  insert race and gets the same 200. Claiming afterwards would leave a window
+  where a retry double-credits a Chef.
+- **A failed fulfilment deletes its claim.** Otherwise one transient error
+  strands the order behind a permanent "duplicate" response.
+- **Payout events are rejected with 400, not accepted with 200.** The payout
+  engine still lives in the private repo, so there is nothing to do with
+  `payout.sent` yet. Answering 200 to an unimplemented money event is how one
+  goes missing without anyone noticing.
+- **A total mismatch warns but still fulfils.** The payment has already settled
+  on-chain; refusing it would strand real money to protect against a cart that
+  got cheaper between quote and settlement.
+
+**Friction, environment rather than sponsor:** the 11 route-level tests cannot
+run in this session. `mongodb-memory-server` downloads a `mongod` binary at
+first run and every MongoDB download host is denied by the environment's
+network policy. The 20 signature and payload-parsing unit tests are pure and do
+pass locally. The route tests need CI, which is an argument for opening the PR
+early rather than at the end.
