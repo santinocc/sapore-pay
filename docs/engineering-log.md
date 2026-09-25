@@ -472,3 +472,21 @@ No functional loss: the removed `setters` parameter would only have bundled
 initial record-setting into the same transaction, and
 `writeChefRecords()` in `apps/web` already writes records as a separate
 call regardless. Not yet re-run against Sepolia.
+
+
+### Thu 25 Sept, later still — shared resolver deployed
+
+`02-deploy-shared-resolver.mjs` ran clean on the first try after the
+2-argument fix. Confirms the diagnosis was actually right this time, not
+just another plausible-looking dead end.
+
+```
+Shared Permissioned Resolver — ENSv2 Sepolia
+address: 0x0356d23bcfBe2Cb42508542c930C7A2cCa352858
+admin:   0x0d9f3D27e8F4EEBC80e445a59dAD5A9173d951ab (same throwaway key as sapore.eth)
+tx:      0xcb1a8fc941d6b668363e7b1d37030fb28773390dc1e60ca589b60f976e5ef45e
+```
+
+Next: `SaporeChefRegistrar.sol` via Foundry (step 3), then authorize it on
+`UserRegistry` (step 4), then a real Chef registration to exercise steps 5-6
+(`isAvailable`/`register`/`03-authorize-chef.mjs`) end to end.

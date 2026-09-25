@@ -11,21 +11,17 @@ behind the ENS card's "Enhanced Access Control... central, not cosmetic"
 requirement, and it's what `apps/web`'s `createOnChainSubnameClaimer` will
 call once deployed.
 
-## Status: step 1 run successfully; step 2 fixed against verified source, awaiting re-run; steps 3-6 not yet run
+## Status: steps 1-2 run successfully; steps 3-6 not yet run
 
-Step 1 has been broadcast to Sepolia (see `docs/engineering-log.md` for the
-deployed `UserRegistry` address). Step 2 reverted three times against
-different hypotheses (role bitmap, then a CREATE2 collision) before the real
-cause turned up in `PermissionedResolver.sol`'s verified Sepolia source: the
-documented `initialize(admin, roleBitmap, setters)` signature doesn't match
-what's actually deployed — the real function only takes `(admin,
-roleBitmap)`, two arguments. The docs describe the *intended* interface for
-a contract whose own banner says "not yet final"; the deployed one had
-already drifted. Full diagnosis history in `docs/engineering-log.md`'s last
-three entries. Fixed, but not yet re-run against Sepolia. Steps 3-6 are
-written but not yet run — same network-access constraint as
-`sapore/scripts/register-sepolia-ens`: this session has no RPC access, so
-every step below runs on your machine.
+Steps 1 and 2 have been broadcast to Sepolia (see `docs/engineering-log.md`
+for the deployed `UserRegistry` and shared resolver addresses, and its last
+few entries for step 2's diagnosis history — the documented
+`initialize(admin, roleBitmap, setters)` signature didn't match what's
+actually deployed, which only takes two arguments; the docs describe the
+*intended* interface for a contract whose own banner says "not yet final,"
+and the deployed one had already drifted). Steps 3-6 are written but not yet
+run — same network-access constraint as `sapore/scripts/register-sepolia-ens`:
+this session has no RPC access, so every step below runs on your machine.
 
 ### Step 1 — deploy the UserRegistry proxy, and point `sapore.eth` at it
 
