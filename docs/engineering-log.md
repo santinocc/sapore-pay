@@ -15,6 +15,7 @@ not it is flattering.
 |---|---|---|---|
 | Hackathon kickoff | Fri 21:00 | Fri 21:00 | 0:00 |
 | Public repo, first commit | +0:45 | Fri 21:35 | 0:35 |
+| World Developer Portal app + `chef-onboarding` action live | — | Fri, live during manual-tasks walkthrough | — |
 | First IDKit line written | — | _pending_ | — |
 | **First successful World ID verification** | — | _pending_ | — |
 | First ENSv2 Sepolia name resolved by the service | — | _pending_ | — |
@@ -216,3 +217,59 @@ passed with 11 failed — same total, so all 11 route tests ran rather than bein
 skipped, and the 373 pre-existing tests confirm the fulfilment refactor did not
 break the legacy paste-a-tx-hash flow. Lint, server build and Docker build green
 too.
+
+
+### Fri 25 Sept — World Developer Portal setup (Santino, live)
+
+Walked Santino through developer.world.org interactively rather than handing
+over a static doc — worth doing, because the Portal's flow has moved since the
+prep research and a written runbook alone would have stalled on step 2.
+
+**App reused, not created fresh.** Santino already had a "Sapore" app from
+earlier setup. Confirmed reusing it is fine — the app's display name is not
+part of anything judged; only `WORLD_APP_ID` and the action identifier matter.
+No reason to fragment state across two apps.
+
+`WORLD_APP_ID=app_ef4a50bae3f0b2dba0f1058e55bdb0bc`
+
+**Friction, worth carrying into the World integration debrief (requirement 5):**
+the Portal now gates action creation behind a **"register relying party"** step
+that our prep docs (`stablecoin-rail-research.md`, this repo's own kickoff
+notes) never anticipated. They describe the classic flow — call
+`POST /api/v2/verify/{app_id}` with just the app id — with no mention of a
+relying party or a signer key. The current Portal instead requires:
+
+1. Registering the app as a "relying party" (one-time, blocked action creation
+   until done).
+2. Configuring a **signer key** — a secp256k1 keypair used to sign proof
+   requests. Chose "Generate new key" (Portal-recommended, no existing
+   infra needed) over "Use Existing Key" (bring your own public key, e.g. an
+   Ethereum address already under your control). The private key was
+   downloaded and kept off both repos and this chat.
+
+This is a real architecture difference from what was planned, not a UI
+relabeling: the classic app-id-only cloud verify may no longer be the current
+API surface, or may coexist with a signed-request path we now have the key
+for. **To resolve properly before wiring `createWorldVerifier` for real** —
+check World's current docs for whether `/api/v2/verify/{app_id}` still works
+standalone or whether the signer key must sign the verification request.
+Building against the wrong assumption here is exactly the kind of thing that
+costs hours at hour 20 instead of hour 6.
+
+**Action created and confirmed correct:**
+
+```
+Identifier: chef-onboarding
+Description: Verify you are a unique human before becoming a Chef on Sapore
+```
+
+No "max verifications per person" field exists in the Portal UI — confirmed
+this is not a missing setting but structural to how Incognito Actions work:
+the nullifier hash is deterministic per (person, action) pair, so a second
+verification attempt for the same action is either rejected by World's own
+endpoint or produces a nullifier we already have on file. Either way, it is
+exactly the mechanism the `already_registered` screen in `ChefOnboarding.tsx`
+was built to handle — nothing to change there.
+
+World ID setup is now unblocked. Next: confirm the current verify request
+shape with real docs before writing `createWorldVerifier`'s implementation.
