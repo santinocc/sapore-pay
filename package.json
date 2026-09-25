@@ -1,0 +1,23 @@
+{
+  "name": "sapore-pay",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Open-source stablecoin checkout and creator payouts for marketplaces (Tempo · Privy · Bridge · World ID · ENS)",
+  "license": "MIT",
+  "packageManager": "pnpm@10.32.1",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "pnpm -r build",
+    "test": "pnpm -r test",
+    "lint": "biome check .",
+    "format": "biome check --write .",
+    "dev:service": "pnpm --filter @sapore-pay/service dev",
+    "dev:web": "pnpm --filter @sapore-pay/web dev"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.5.14",
+    "typescript": "^5.6.0"
+  }
+}
