@@ -32,10 +32,13 @@ export function ChefOnboarding({
   verifier,
   accountId,
   onVerified,
+  onClaimEns,
 }: {
   verifier: HumanVerifier
   accountId: string
   onVerified?: (nullifierHash: string) => void
+  /** "Claim your name.sapore.eth" — an explicit next step, not an auto-redirect. */
+  onClaimEns?: () => void
 }) {
   const [phase, setPhase] = useState<Phase>({ kind: 'intro' })
 
@@ -54,6 +57,7 @@ export function ChefOnboarding({
     <Outcome
       outcome={phase.outcome}
       onRetry={() => setPhase({ kind: 'intro' })}
+      onClaimEns={onClaimEns}
     />
   )
 }
@@ -140,9 +144,11 @@ function Verifying() {
 function Outcome({
   outcome,
   onRetry,
+  onClaimEns,
 }: {
   outcome: VerificationOutcome
   onRetry: () => void
+  onClaimEns?: () => void
 }) {
   switch (outcome.status) {
     case 'verified':
@@ -160,7 +166,11 @@ function Outcome({
           >
             nullifier · {shorten(outcome.nullifierHash)}
           </p>
-          <button type="button" className="co-btn co-btn--primary">
+          <button
+            type="button"
+            className="co-btn co-btn--primary"
+            onClick={onClaimEns}
+          >
             Claim your name.sapore.eth
           </button>
         </Card>
