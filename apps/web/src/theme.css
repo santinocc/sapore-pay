@@ -1,0 +1,158 @@
+/*
+ * theme.css — Sapore's visual language, ported to the web app.
+ *
+ * These are not invented. They are the colours the Expo app actually uses,
+ * counted across screens/ and components/ in the private repo: #C8553A appears
+ * 50 times, #C9A84C 37, #FFFDF9 33, #2C1A0E 29. Sapore Pay is a different
+ * codebase and a public one, but a Cooker who lands here from the app should
+ * not feel handed off to a different product.
+ *
+ * (Those values are inherited from Chefini and are on Sapore's own list to
+ * migrate. When that happens these tokens are the single place to change.)
+ */
+
+:root {
+  /* Surfaces — warm, paper-like, never pure white */
+  --bg: #fffdf9;
+  --surface: #f5efe6;
+  --surface-raised: #ffffff;
+  --border: #e2d5c3;
+  --border-strong: #b89a8a;
+
+  /* Ink */
+  --text: #2c1a0e;
+  --text-muted: #6b4c35;
+  --text-faint: #a08060;
+
+  /* Brand */
+  --accent: #c8553a; /* terracotta — primary action */
+  --accent-hover: #ae452d;
+  --accent-soft: #fbeee9;
+  --gold: #c9a84c; /* chef tiers, accents */
+  --gold-soft: #f9f1da;
+
+  /* Status */
+  --ok: #2e7d32;
+  --ok-soft: #e9f3ea;
+  --warn: #a0722a;
+  --warn-soft: #fbf2e2;
+  --danger: #a3301c;
+  --danger-soft: #fbeae6;
+
+  --radius: 14px;
+  --radius-lg: 22px;
+  --shadow: 0 1px 2px rgb(44 26 14 / 6%), 0 8px 24px rgb(44 26 14 / 8%);
+  --font-display: "Playfair Display", Georgia, "Times New Roman", serif;
+  --font-body: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
+/*
+ * Dark mode is a genuine port of the palette, not an inversion: the creams
+ * become warm browns so the terracotta stays legible against them.
+ */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #1a100a;
+    --surface: #241710;
+    --surface-raised: #2e1d14;
+    --border: #46301f;
+    --border-strong: #6b4c35;
+    --text: #f6ece1;
+    --text-muted: #c5a98f;
+    --text-faint: #96785d;
+    --accent: #e06b4d;
+    --accent-hover: #ef7d5f;
+    --accent-soft: #3a2018;
+    --gold: #d8ba63;
+    --gold-soft: #33290f;
+    --ok: #7fc384;
+    --ok-soft: #1d2c1e;
+    --warn: #d3a259;
+    --warn-soft: #2f2413;
+    --danger: #e4836d;
+    --danger-soft: #37190f;
+    --shadow: 0 1px 2px rgb(0 0 0 / 30%), 0 8px 24px rgb(0 0 0 / 35%);
+  }
+}
+
+:root[data-theme="dark"] {
+  --bg: #1a100a;
+  --surface: #241710;
+  --surface-raised: #2e1d14;
+  --border: #46301f;
+  --border-strong: #6b4c35;
+  --text: #f6ece1;
+  --text-muted: #c5a98f;
+  --text-faint: #96785d;
+  --accent: #e06b4d;
+  --accent-hover: #ef7d5f;
+  --accent-soft: #3a2018;
+  --gold: #d8ba63;
+  --gold-soft: #33290f;
+  --ok: #7fc384;
+  --ok-soft: #1d2c1e;
+  --warn: #d3a259;
+  --warn-soft: #2f2413;
+  --danger: #e4836d;
+  --danger-soft: #37190f;
+  --shadow: 0 1px 2px rgb(0 0 0 / 30%), 0 8px 24px rgb(0 0 0 / 35%);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-body);
+  font-size: 16px;
+  line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
+}
+
+h1,
+h2,
+h3 {
+  font-family: var(--font-display);
+  font-weight: 700;
+  line-height: 1.2;
+  margin: 0;
+}
+
+a {
+  color: var(--accent);
+}
+
+button {
+  font: inherit;
+  cursor: pointer;
+}
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* The standard reduced-motion reset. !important is load-bearing here: it has
+     to beat every author rule, including the keyframe durations set further up
+     this file. Dropping it silently stops the reset working, which is a worse
+     outcome than the lint rule it satisfies. */
+  *,
+  *::before,
+  *::after {
+    /* biome-ignore lint/complexity/noImportantStyles: see above */
+    animation-duration: 0.01ms !important;
+    /* biome-ignore lint/complexity/noImportantStyles: see above */
+    animation-iteration-count: 1 !important;
+    /* biome-ignore lint/complexity/noImportantStyles: see above */
+    transition-duration: 0.01ms !important;
+  }
+}
