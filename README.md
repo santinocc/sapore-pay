@@ -4,7 +4,7 @@ Open-source **stablecoin checkout and creator payouts** for marketplaces, built 
 ETHGlobal Tokyo 2026 (Sept 25–27) for the recipe marketplace [Sapore](#pre-existing-work).
 
 - Cookers pay a recipe with one tap: TIP-20 transfers on **Tempo**, reconciled by
-  on-chain memo, gas sponsored — or with the `pay` command inside **World App**.
+  on-chain memo, gas sponsored, signed from a **Privy** embedded wallet.
 - Chefs are paid in one atomic batch per cycle to `alias.sapore.eth` (**ENS**),
   from an escrow held in a policy-controlled **Privy** server wallet.
 - Chef accounts are unique humans (**World ID**), so rewards can't be farmed.
@@ -22,7 +22,7 @@ ETHGlobal Tokyo 2026 (Sept 25–27) for the recipe marketplace [Sapore](#pre-exi
 | `packages/privy` | Privy glue: verify Sapore RS256 tokens for custom auth, server-wallet signing for escrow/treasury. |
 | `packages/bridge` | Bridge on/off-ramp + virtual accounts. |
 | `packages/ens` | `*.sapore.eth` subnames: CCIP-Read gateway resolver and ENSv2 registrar helpers. |
-| `packages/world` | World ID verification via IDKit, checked server-side (cloud verify). |
+| `packages/world` | World ID verification via IDKit, checked server-side (cloud verify). Gates Chef onboarding only — see `docs/engineering-log.md`. |
 | `packages/sdk` | Typed HTTP client used by the Sapore API (and any other marketplace). |
 | `apps/service` | Deployable payments API: orders, indexer, webhooks, payout scheduler. |
 | `apps/web` | The public demo client: sign in, pay a cart, verify with World ID, claim a subname. This is the live demo judges open. |
