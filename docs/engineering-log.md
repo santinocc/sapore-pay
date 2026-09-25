@@ -348,3 +348,39 @@ directly. And Foundry isn't installed in this sandbox and can't be (same
 restriction), so the contract has not been compiled, only written to match
 the tutorial's interfaces exactly. Those are different claims; only the
 second is still unverified.
+
+
+### Thu 25 Sept, later still — deploy scripts run; resolver revert diagnosed and fixed
+
+Ran `01-deploy-user-registry.mjs` against Sepolia — succeeded first try.
+`UserRegistry` proxy: `0x9a932e911c7FD7DfD54d1B11Ef4fE0c9aa46862d`, connected
+into `sapore.eth`'s hierarchy via `setSubregistry()`.
+
+`02-deploy-shared-resolver.mjs` reverted with no reason string. Diagnosed by
+adding `simulateContract`/`getBytecode` checks and decoding the raw revert
+calldata by hand — the calldata matched intent exactly, so the revert had to
+be inside the resolver's own `initialize()` logic, not a wiring bug.
+Suspected the `ALL_ROLES` constant: it was copied verbatim from the
+Verifiable Factory doc's generic "every 4th bit" example
+(`0x1111...1111`), which happens to work for `UserRegistry` (step 1) but not
+for the Permissioned Resolver, whose actual roles occupy specific,
+non-contiguous bits (0, 4, 8, 12, 16, 20, 24, 28, 32, 36, 124, each with an
+admin variant at `+128`) per the "Permissioned Resolver" doc's own "EAC
+Integration" table. Confirmed once Santino supplied that doc: the blanket
+bitmap set bits (40, 44, 48, ... 120) the resolver doesn't define at all,
+which is almost certainly what `initialize()` was rejecting. Replaced it
+with a bitmap built only from the resolver's real roles. Not yet re-run
+against Sepolia — the fix is confirmed syntactically sound (dry-run against
+a throwaway key fails only at the RPC boundary, no code error) but the
+actual on-chain call is still unverified.
+
+Also wrote `03-authorize-chef.mjs`, the piece both `02`'s comments and this
+log's previous entry flagged as missing: delegating a *specific* Chef write
+access to *only* their own name, using `authorizeNameRoles` per the doc's
+"Delegating a Single Text Key" example (DNS-encoded name via
+`toHex(packetToBytes(name))`, not a namehash — the one detail in that
+example that doesn't match the rest of this codebase's namehash-based
+calls). Granted roles are just `ROLE_SET_ADDR | ROLE_SET_TEXT` — the two
+record types `writeChefRecords()` actually writes — same "minimum
+sufficient" reasoning as the World credential and the registrar's own role
+bitmap, applied a third time.

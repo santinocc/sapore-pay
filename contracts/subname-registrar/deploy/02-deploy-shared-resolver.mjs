@@ -63,8 +63,23 @@ const resolverInitAbi = parseAbi([
   'function initialize(address admin, uint256 roleBitmap, bytes[] setters)',
 ])
 
-const ALL_ROLES =
-  0x1111111111111111111111111111111111111111111111111111111111111111n
+// Unlike 01-deploy-user-registry.mjs's ALL_ROLES (a blanket "every 4th bit"
+// pattern lifted from the Verifiable Factory doc's generic example), the
+// Permissioned Resolver's roles are NOT laid out on every 4th bit up to 252 —
+// its "EAC Integration" doc page defines exactly these roles, each with an
+// admin variant at `role << 128`:
+//   ROLE_SET_ADDR=1<<0     ROLE_SET_TEXT=1<<4        ROLE_SET_CONTENTHASH=1<<8
+//   ROLE_SET_PUBKEY=1<<12  ROLE_SET_ABI=1<<16        ROLE_SET_INTERFACE=1<<20
+//   ROLE_SET_NAME=1<<24    ROLE_SET_ALIAS=1<<28      ROLE_CLEAR=1<<32
+//   ROLE_SET_DATA=1<<36    ROLE_UPGRADE=1<<124
+// The old blanket bitmap also set bits 40, 44, 48, ... 120 — positions the
+// resolver doesn't define at all. That's the actual cause of the "reverted,
+// no reason given" failure: initialize() rejects an unrecognized bit.
+const RESOLVER_ROLE_BITS = [0, 4, 8, 12, 16, 20, 24, 28, 32, 36, 124]
+const RESOLVER_ALL_ROLES = RESOLVER_ROLE_BITS.reduce(
+  (bitmap, bit) => bitmap | (1n << BigInt(bit)) | (1n << BigInt(bit + 128)),
+  0n,
+)
 
 async function main() {
   const account = privateKeyToAccount(PRIVATE_KEY)
@@ -96,7 +111,7 @@ async function main() {
   const resolverInitData = encodeFunctionData({
     abi: resolverInitAbi,
     functionName: 'initialize',
-    args: [account.address, ALL_ROLES, []],
+    args: [account.address, RESOLVER_ALL_ROLES, []],
   })
 
   // Sanity checks that would otherwise show up only as an opaque revert.

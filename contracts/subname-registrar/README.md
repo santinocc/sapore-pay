@@ -11,12 +11,16 @@ behind the ENS card's "Enhanced Access Control... central, not cosmetic"
 requirement, and it's what `apps/web`'s `createOnChainSubnameClaimer` will
 call once deployed.
 
-## Status: contract written; deployment scripts written; not yet run
+## Status: step 1 run successfully; step 2 fixed, awaiting re-run; steps 3-6 not yet run
 
-Everything needed to deploy is now specified — no more guessed interfaces —
-but nothing here has actually been broadcast to Sepolia yet. Same
-network-access constraint as `sapore/scripts/register-sepolia-ens`: this
-session has no RPC access, so every step below runs on your machine.
+Everything needed to deploy is now specified — no more guessed interfaces.
+Step 1 has been broadcast to Sepolia (see `docs/engineering-log.md` for the
+deployed `UserRegistry` address). Step 2 previously reverted with no reason
+given — root cause was an invalid role bitmap in its `initialize()` call,
+now fixed (see the script's own comment) but not yet re-run against Sepolia.
+Steps 3-6 are written but not yet run — same network-access constraint as
+`sapore/scripts/register-sepolia-ens`: this session has no RPC access, so
+every step below runs on your machine.
 
 ### Step 1 — deploy the UserRegistry proxy, and point `sapore.eth` at it
 
@@ -47,16 +51,16 @@ One resolver, owned by Sapore, that every Chef subname points at (the
 "shared resolver + delegation" side of the decision recorded in
 `docs/engineering-log.md`, rather than deploying a fresh resolver per Chef).
 
-**Not yet wired:** delegating a *specific* Chef write access to only their
-own node on this resolver (`authorize*Roles`) — the exact function signature
-is on the "Permissioned Resolver" contract page, not yet read in this
-session. Until that's read, Sapore's own admin key is the only account that
-can write records on it. That's a real, demoable intermediate state (Sapore
-setting a Chef's payout address on their behalf after they submit it through
-the UI), just not the end state where the Chef signs their own write — worth
-sending that doc page over next if you want the full delegation story.
+Delegating a *specific* Chef write access to only their own node on this
+resolver is a separate step (Step 6, `03-authorize-chef.mjs`) — run once per
+Chef, after they've registered. Until it's run for a given Chef, Sapore's own
+admin key is the only account that can write records for their name. That's
+a real, demoable intermediate state (Sapore setting a Chef's payout address
+on their behalf after they submit it through the UI), not the end state
+where the Chef signs their own write.
 
-Prints the deployed resolver address — you'll need it for step 3.
+Note the deployed resolver address for `.env`'s `SHARED_RESOLVER` (step 6)
+and step 3's `resolver` argument to `register()`.
 
 ### Step 3 — deploy `SaporeChefRegistrar.sol` (needs Foundry)
 
@@ -102,8 +106,27 @@ Not `ROLE_REGISTRAR | ROLE_RENEW` — this contract has no `renew()`.
 
 `isAvailable("alice")` should read `true`; after
 `register("alice", chefWallet, resolverAddress)` (resolver = step 2's
-output), it should read `false`, and `getEnsAddress({ name:
-'alice.sapore.eth' })` should eventually resolve.
+output), it should read `false`.
+
+### Step 6 — delegate the Chef's own write access
+
+```bash
+node 03-authorize-chef.mjs alice 0xChefWalletAddress
+```
+
+Grants `alice`'s own wallet `ROLE_SET_ADDR | ROLE_SET_TEXT` on
+*only* `alice.sapore.eth` (via `authorizeNameRoles`, per the "Permissioned
+Resolver" doc's "Delegating a Single Text Key" example) — exactly the two
+record types `apps/web/src/lib/ensRecords.ts`'s `writeChefRecords()` writes,
+nothing else, and only on their own name. Before this runs, only Sapore's
+admin key can write `alice.sapore.eth`'s records; after, `alice`'s own
+wallet can call `writeChefRecords()` directly, and attempting to write any
+other name still reverts with `EACUnauthorizedAccountRoles`.
+
+Requires `SHARED_RESOLVER` in `.env` (step 2's output).
+
+Once this runs, `getEnsAddress({ name: 'alice.sapore.eth' })` resolves to
+whatever address `alice` (or Sapore, before this step) last wrote.
 
 ## Why the resolver parameter isn't `address(0)` here
 
