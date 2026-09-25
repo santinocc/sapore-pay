@@ -309,3 +309,184 @@ case) holds no roles on the parent's resolver by default and gets
 `authorize*Roles`. That's exactly the "Chef edits only their own record,
 Sapore can revoke" story — it's not a permission model we're grafting onto
 ENS, it's the one ENSv2 ships.
+
+
+### Fri 25 Sept, later — SaporeChefRegistrar contract written (not yet deployed)
+
+Santino provided the "For Contract Developers" ENSv2 guide directly — the
+missing piece from `createOnChainSubnameClaimer`'s stub. Wrote
+`contracts/subname-registrar/SaporeChefRegistrar.sol` against it, with two
+product-driven deviations from the tutorial's default rather than a literal
+copy:
+
+- **A narrower role bitmap.** The tutorial's default grants five roles
+  including `ROLE_CAN_TRANSFER_ADMIN` — which, per the docs, IS the transfer
+  permission itself, not a meta-role. Granting it to Chefs would let them
+  sell or trade a verified identity, which is a straight hole in the World
+  ID story: a sybil buys a name instead of proving uniqueness. Chefs get
+  `ROLE_SET_RESOLVER[_ADMIN]` only. Worth stating in the submission: the
+  same "minimum sufficient" argument the World integration makes for its
+  credential, made here for a role bitmap.
+- **No renewal.** Chef identities are permanent, not a subscription —
+  `expiry = type(uint64).max`, one less role to grant at deployment.
+
+Also resolved, in conversation rather than in docs: whether Cookers and
+Chefs should have separate wallets, and whether Cookers should get their own
+ENS subnamespace (`<alias>.cooker.sapore.eth`). Decided against both — one
+Privy wallet per person for both roles (a Chef's payout wallet is a
+destination, not a treasury; the batch payout job already holds funds in
+escrow, so there's no real security reason to split), and no ENS name for
+Cookers at all (nobody looks up a Cooker by name; manufacturing one would be
+the exact over-application the World card penalizes, applied to ENS
+instead).
+
+**Not deployed.** Two real blockers, not busywork: deploying this needs a
+UserRegistry proxy via the Verifiable Factory, and the guide for that
+("Deploying a Registry Proxy") hasn't been fetched — same network
+restriction that blocks this session from reaching docs.ens.domains
+directly. And Foundry isn't installed in this sandbox and can't be (same
+restriction), so the contract has not been compiled, only written to match
+the tutorial's interfaces exactly. Those are different claims; only the
+second is still unverified.
+
+
+### Thu 25 Sept, later still — deploy scripts run; resolver revert diagnosed and fixed
+
+Ran `01-deploy-user-registry.mjs` against Sepolia — succeeded first try.
+`UserRegistry` proxy: `0x9a932e911c7FD7DfD54d1B11Ef4fE0c9aa46862d`, connected
+into `sapore.eth`'s hierarchy via `setSubregistry()`.
+
+`02-deploy-shared-resolver.mjs` reverted with no reason string. Diagnosed by
+adding `simulateContract`/`getBytecode` checks and decoding the raw revert
+calldata by hand — the calldata matched intent exactly, so the revert had to
+be inside the resolver's own `initialize()` logic, not a wiring bug.
+Suspected the `ALL_ROLES` constant: it was copied verbatim from the
+Verifiable Factory doc's generic "every 4th bit" example
+(`0x1111...1111`), which happens to work for `UserRegistry` (step 1) but not
+for the Permissioned Resolver, whose actual roles occupy specific,
+non-contiguous bits (0, 4, 8, 12, 16, 20, 24, 28, 32, 36, 124, each with an
+admin variant at `+128`) per the "Permissioned Resolver" doc's own "EAC
+Integration" table. Confirmed once Santino supplied that doc: the blanket
+bitmap set bits (40, 44, 48, ... 120) the resolver doesn't define at all,
+which is almost certainly what `initialize()` was rejecting. Replaced it
+with a bitmap built only from the resolver's real roles. Not yet re-run
+against Sepolia — the fix is confirmed syntactically sound (dry-run against
+a throwaway key fails only at the RPC boundary, no code error) but the
+actual on-chain call is still unverified.
+
+Also wrote `03-authorize-chef.mjs`, the piece both `02`'s comments and this
+log's previous entry flagged as missing: delegating a *specific* Chef write
+access to *only* their own name, using `authorizeNameRoles` per the doc's
+"Delegating a Single Text Key" example (DNS-encoded name via
+`toHex(packetToBytes(name))`, not a namehash — the one detail in that
+example that doesn't match the rest of this codebase's namehash-based
+calls). Granted roles are just `ROLE_SET_ADDR | ROLE_SET_TEXT` — the two
+record types `writeChefRecords()` actually writes — same "minimum
+sufficient" reasoning as the World credential and the registrar's own role
+bitmap, applied a third time.
+
+
+### Thu 25 Sept, later still (correction) — the role-bitmap fix wasn't the real fix
+
+Santino re-ran `02-deploy-shared-resolver.mjs` with the bitmap fix applied —
+same revert, zero revert data, same `raw: '0x'`. Decoded the new calldata by
+hand again: it round-trips to exactly the intended `RESOLVER_ALL_ROLES`
+value, so the bitmap fix was correctly applied but didn't fix anything.
+
+Santino then pasted the *entire* "Permissioned Resolver" page, including the
+"Reference" section that the previous partial paste (EAC Integration + Code
+Examples only) never reached. Two things fell out of reading it in full:
+
+1. **The `initialize(admin, roleBitmap, setters)` signature was right all
+   along** — the Reference section's own Write Functions list confirms it
+   verbatim, selector included (`toFunctionSelector` on the signature
+   produces `0x7058b559`, matching every revert's calldata exactly). Not a
+   guess that happened to work; a guess that turned out correct, confirmed
+   after the fact — worth being honest about the distinction.
+2. **The doc's own "Deploying a Resolver Proxy" worked example** (which,
+   it turns out, exists on the *Verifiable Factory* page, not the resolver
+   page — already read earlier in the session, its resolver-specific example
+   just hadn't been connected to this bug yet) uses the exact same blanket
+   `ALL_ROLES = 0x1111...1111` this script started with, the exact same
+   salt scheme, the exact same call shape. Our original code was already a
+   byte-for-byte match of the reference implementation. The role-bitmap
+   "fix" from earlier today was real (narrower is still strictly better
+   practice) but not a fix for this revert — the revert survives even the
+   doc's own canonical example.
+
+So the cause is something the calldata can't reveal: a mundane wrong-address
+possibility (added a direct `recordVersions()` read on
+`PERMISSIONED_RESOLVER_IMPL` to rule that out cheaply), or a CREATE2
+collision at the resolver's address, which is fully determined by
+`(owner, version)`. Worth stating plainly: this repo's throwaway
+`ENS_OWNER_PRIVATE_KEY` has been pasted in this chat and should be treated
+as compromised — if anyone else used it to deploy anything at that exact
+predictable address, this call would revert on the collision with exactly
+this symptom. Added `ENS_RESOLVER_SALT_VERSION` as an env override so
+Santino can test a fresh address directly rather than guess further.
+
+
+### Thu 25 Sept, later still (the actual fix) — initialize() only takes two arguments
+
+Santino tried `ENS_RESOLVER_SALT_VERSION=1` — different salt, different
+proxy address, identical zero-data revert. That ruled out the collision
+theory: whatever's wrong is not address-specific, it's systematic.
+
+At that point every diagnostic available from calldata and docs alone was
+exhausted, so the next step was reading the actual deployed source instead
+of inferring it — both `VerifiableFactory` and `PermissionedResolverImpl`
+are verified on Sepolia Etherscan. Santino found `PermissionedResolver.sol`
+in the file tree and pasted the real `initialize`:
+
+```solidity
+function initialize(address admin, uint256 roleBitmap) external initializer {
+    if (admin == address(0)) revert InvalidOwner();
+    __UUPSUpgradeable_init();
+    _grantRoles(ROOT_RESOURCE, roleBitmap, admin, false);
+}
+```
+
+Two arguments, not three. Every version of this script — including the
+doc's own "Deploying a Resolver Proxy" example, which we'd matched
+byte-for-byte — encoded a call to `initialize(address,uint256,bytes[])`, a
+function that doesn't exist on the deployed contract. Selector
+`0x7058b559` (3-arg) vs. the real `0xcd6dc687` (2-arg) — the delegatecall
+never matched anything, hence the empty revert data every single time,
+regardless of which roleBitmap or which salt we tried. Both of those were
+red herrings chased down a wrong assumption, not actual causes.
+
+**Why the docs were wrong**: the "Permissioned Resolver" page itself says
+"The contracts and interfaces described here are not yet final and may
+change prior to mainnet deployment" — this is exactly that. The Verifiable
+Factory doc's "Deploying a Resolver Proxy" example matches the *documented*
+interface, which had already drifted from the *deployed* one by the time we
+tested it against Sepolia. Three rounds of guessing (bitmap, then CREATE2
+collision) were spent on a premise — "the docs describe what's deployed" —
+that doesn't hold for pre-mainnet contracts. Verified source on the block
+explorer is ground truth here in a way the docs currently aren't; worth
+checking it earlier next time a revert survives a byte-for-byte match with
+documented examples.
+
+Fixed `02-deploy-shared-resolver.mjs` to call the real 2-arg `initialize`.
+No functional loss: the removed `setters` parameter would only have bundled
+initial record-setting into the same transaction, and
+`writeChefRecords()` in `apps/web` already writes records as a separate
+call regardless. Not yet re-run against Sepolia.
+
+
+### Thu 25 Sept, later still — shared resolver deployed
+
+`02-deploy-shared-resolver.mjs` ran clean on the first try after the
+2-argument fix. Confirms the diagnosis was actually right this time, not
+just another plausible-looking dead end.
+
+```
+Shared Permissioned Resolver — ENSv2 Sepolia
+address: 0x0356d23bcfBe2Cb42508542c930C7A2cCa352858
+admin:   0x0d9f3D27e8F4EEBC80e445a59dAD5A9173d951ab (same throwaway key as sapore.eth)
+tx:      0xcb1a8fc941d6b668363e7b1d37030fb28773390dc1e60ca589b60f976e5ef45e
+```
+
+Next: `SaporeChefRegistrar.sol` via Foundry (step 3), then authorize it on
+`UserRegistry` (step 4), then a real Chef registration to exercise steps 5-6
+(`isAvailable`/`register`/`03-authorize-chef.mjs`) end to end.

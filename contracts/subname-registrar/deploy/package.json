@@ -1,0 +1,10 @@
+{
+  "name": "deploy-user-registry",
+  "private": true,
+  "type": "module",
+  "description": "One-time deploy: a UserRegistry proxy for sapore.eth's Chef subnames, via ENSv2's Verifiable Factory. Not part of the pnpm workspace.",
+  "dependencies": {
+    "viem": "^2.21.0",
+    "dotenv": "^16.4.0"
+  }
+}
