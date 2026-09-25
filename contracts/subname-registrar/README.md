@@ -11,15 +11,22 @@ behind the ENS card's "Enhanced Access Control... central, not cosmetic"
 requirement, and it's what `apps/web`'s `createOnChainSubnameClaimer` will
 call once deployed.
 
-## Status: steps 1-4 run successfully; steps 5-6 not yet run
+## Status: all six steps run successfully — full pipeline verified on Sepolia
 
-Steps 1-4 have been broadcast to Sepolia (see `docs/engineering-log.md` for
-the deployed `UserRegistry`, shared resolver, and `SaporeChefRegistrar`
-addresses, and its diagnosis history for step 2's `initialize()` argument
-mismatch and a caught access-control gap in `register()`, both fixed before
-anything shipped). Steps 5-6 are written but not yet run — same
-network-access constraint as `sapore/scripts/register-sepolia-ens`:
-this session has no RPC access, so every step below runs on your machine.
+Every step below has been broadcast to Sepolia, in order, with a real Chef
+(`marco.sapore.eth`) registered and delegated write access at the end. See
+`docs/engineering-log.md` for all deployed addresses and tx hashes, and its
+diagnosis history for the two real bugs found and fixed along the way (a
+resolver `initialize()` argument-count mismatch, and a missing
+access-control check in `SaporeChefRegistrar.register()`) — both fixed
+before anything shipped.
+
+Not yet done: wiring `apps/web`'s `createOnChainSubnameClaimer` (still an
+honest stub) and `createOnChainRecordWriter` to these real deployed
+contracts — that's app code, not a deploy script, and is tracked
+separately from this runbook. Same network-access constraint as
+`sapore/scripts/register-sepolia-ens` applies to all scripts below: this
+session has no RPC access, so every step runs on your machine.
 
 ### Step 1 — deploy the UserRegistry proxy, and point `sapore.eth` at it
 

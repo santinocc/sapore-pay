@@ -582,3 +582,26 @@ tx:      0xc934cce82a7178413fec43ba981ec065e352194ff81eaf4a922e491f96d85cce
 Registry → shared resolver → registrar → a real Chef subname, all real,
 all on Sepolia. Only step 6 (delegating `marco`'s own write access via
 `03-authorize-chef.mjs`) is left to close the loop.
+
+
+### Thu 25 Sept, later still — full pipeline verified end to end
+
+`03-authorize-chef.mjs` ran clean: `0x0d9f3D27e8F4EEBC80e445a59dAD5A9173d951ab`
+can now call `setAddr`/`setText` for `marco.sapore.eth` only, tx
+`0x67f2a8e05dd8223f547eaccdd6cf9c0179a662921e06b43533e49b1502e1c837`.
+
+All six steps in `contracts/subname-registrar/README.md` have now run
+successfully against Sepolia, in order, with no simulated stand-ins:
+UserRegistry deployed → shared resolver deployed → SaporeChefRegistrar
+deployed → authorized with ROLE_REGISTRAR → a real Chef (`marco.sapore.eth`)
+registered → that Chef's write access delegated. Three real bugs were found
+and fixed along the way (an invalid role bitmap that turned out not to be
+the actual problem, a resolver `initialize()` argument-count mismatch that
+was, and a missing access-control check in `register()`), all documented
+above as they happened rather than cleaned up after the fact.
+
+Not yet done: wiring `apps/web`'s `createOnChainSubnameClaimer` (still an
+honest stub) to `SaporeChefRegistrar`, and `createOnChainRecordWriter` to
+actually call `writeChefRecords()` against `marco.sapore.eth`'s resolver
+now that write access is delegated — both are real product code changes
+left for the PR or a follow-up, not deploy-script work.
