@@ -99,7 +99,40 @@ async function main() {
     args: [account.address, ALL_ROLES, []],
   })
 
+  // Sanity checks that would otherwise show up only as an opaque revert.
+  const factoryCode = await client.getBytecode({ address: VERIFIABLE_FACTORY })
+  const implCode = await client.getBytecode({
+    address: PERMISSIONED_RESOLVER_IMPL,
+  })
+  console.log(`Factory has code: ${Boolean(factoryCode)}`)
+  console.log(`Implementation has code: ${Boolean(implCode)}`)
+  if (!factoryCode || !implCode) {
+    throw new Error(
+      'One of the addresses above has no deployed code on this chain — ' +
+        'wrong address, or wrong network. Not a revert, a bad address.',
+    )
+  }
+
   console.log('Deploying shared Permissioned Resolver proxy...')
+  // simulateContract runs the call first via eth_call, which surfaces the
+  // actual revert reason — writeContract alone often reports only "reverted"
+  // with no detail, because it's not simulated against the ABI first.
+  try {
+    await client.simulateContract({
+      account,
+      address: VERIFIABLE_FACTORY,
+      abi: verifiableFactoryAbi,
+      functionName: 'deployProxy',
+      args: [PERMISSIONED_RESOLVER_IMPL, resolverSalt, resolverInitData],
+    })
+  } catch (simErr) {
+    console.error('\nSimulation failed — this is the real reason:')
+    console.error(simErr.shortMessage || simErr.message)
+    if (simErr.metaMessages) console.error(simErr.metaMessages.join('\n'))
+    if (simErr.cause) console.error('cause:', simErr.cause)
+    throw simErr
+  }
+
   const tx = await wallet.writeContract({
     address: VERIFIABLE_FACTORY,
     abi: verifiableFactoryAbi,
