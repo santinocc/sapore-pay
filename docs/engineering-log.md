@@ -18,6 +18,7 @@ not it is flattering.
 | World Developer Portal app + `chef-onboarding` action live | — | Fri, live during manual-tasks walkthrough | — |
 | First IDKit line written | — | _pending_ | — |
 | **First successful World ID verification** | — | _pending_ | — |
+| `sapore.eth` registered on ENSv2 Sepolia | — | Fri, block 11780643 | — |
 | First ENSv2 Sepolia name resolved by the service | — | _pending_ | — |
 | First memo'd Tempo transfer reconciled to an order | — | _pending_ | — |
 | `apps/web` live on a public URL | +6:00 | _pending — Railway services not created yet_ | — |
@@ -273,3 +274,38 @@ was built to handle — nothing to change there.
 
 World ID setup is now unblocked. Next: confirm the current verify request
 shape with real docs before writing `createWorldVerifier`'s implementation.
+
+
+### Fri 25 Sept, evening — `sapore.eth` live on ENSv2 Sepolia
+
+Registered via a script (`scripts/register-sepolia-ens` in the private repo,
+not this one — see the ADR on the crypto/product boundary), because ENSv2
+currently has no registration web UI. The "For App Developers" and "ETH
+Registrar" docs pages gave the exact commit-reveal shape needed; the only
+missing piece was the Sepolia contract addresses, which live in a
+"Deployments" table that turned out to be under ENSv2 > Overview, not on the
+page that references it three times — worth remembering next time a docs
+page cites a table by name without linking it.
+
+```
+sapore.eth — ENSv2 Sepolia
+owner:  0x0d9f3D27e8F4EEBC80e445a59dAD5A9173d951ab (throwaway key)
+tx:     0x544e55dc42d4222d6a6641bb202f492a318cec39896cf06f60fb4cbdb2736260
+block:  11780643
+```
+
+Ran end-to-end on the first attempt — no fixes needed after the addresses
+were in. Registered with **no resolver set**; that's deliberate, not
+unfinished. Deploying a Permissioned Resolver and writing `addr(60)` /
+`addr(2147487865)` (Tempo, ENSIP-11) / `com.sapore.tier` records is the
+actual card-scored work, starting now in `apps/web`.
+
+One thing already confirmed from the docs that matters for what comes next:
+the ENS card's "Enhanced Access Control... central, not cosmetic" language
+maps onto something real in the protocol, not just our framing of it. The
+"Who Can Write" section is explicit that a subname owner (a Chef, in our
+case) holds no roles on the parent's resolver by default and gets
+`EACUnauthorizedAccountRoles` unless the parent delegates via
+`authorize*Roles`. That's exactly the "Chef edits only their own record,
+Sapore can revoke" story — it's not a permission model we're grafting onto
+ENS, it's the one ENSv2 ships.
