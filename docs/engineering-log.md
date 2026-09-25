@@ -527,3 +527,27 @@ deployment would want a dedicated backend signer with a narrower blast
 radius than the account that also owns `sapore.eth` and the shared resolver.
 
 Not yet re-run through `forge build` after this change or deployed.
+
+
+### Thu 25 Sept, later still — SaporeChefRegistrar deployed
+
+`forge create` succeeded after the access-control fix and a re-`forge build`
+(clean except the accepted reentrancy-events warning).
+
+```
+SaporeChefRegistrar — ENSv2 Sepolia
+address: 0x45347E1a412a16f494d945Ed3402A773A07fc5D1
+tx:      0x5080ac0f18f586fc38ed376ef74348090f0195d5ff17a6228766a04f4f058feb
+constructor args: registry=0x9a932e911c7FD7DfD54d1B11Ef4fE0c9aa46862d,
+  paymentToken=0xBA11ebdB3f9a2c5946D8629517f06364E53A2E10 (MockUSDC),
+  beneficiary=backend=0x0d9f3D27e8F4EEBC80e445a59dAD5A9173d951ab (sapore.eth's admin key), price=0
+```
+
+Before granting it `ROLE_REGISTRAR` (step 4), checked `grantRootRoles` and
+`ROLE_REGISTRAR`'s bit value against verified Sepolia source
+(`EnhancedAccessControl.sol`, `IEnhancedAccessControl.sol`,
+`RegistryRolesLib.sol`) rather than trust the README's existing snippet —
+both turned out correct as documented, unlike the resolver's `initialize()`.
+Wrote `04-authorize-registrar.mjs` (matching the pattern of scripts 01-03)
+to replace the README's bare TypeScript snippet with something actually
+runnable; dry-run tested, not yet run against Sepolia.

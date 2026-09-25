@@ -11,16 +11,14 @@ behind the ENS card's "Enhanced Access Control... central, not cosmetic"
 requirement, and it's what `apps/web`'s `createOnChainSubnameClaimer` will
 call once deployed.
 
-## Status: steps 1-2 run successfully; steps 3-6 not yet run
+## Status: steps 1-3 run successfully; steps 4-6 not yet run
 
-Steps 1 and 2 have been broadcast to Sepolia (see `docs/engineering-log.md`
-for the deployed `UserRegistry` and shared resolver addresses, and its last
-few entries for step 2's diagnosis history — the documented
-`initialize(admin, roleBitmap, setters)` signature didn't match what's
-actually deployed, which only takes two arguments; the docs describe the
-*intended* interface for a contract whose own banner says "not yet final,"
-and the deployed one had already drifted). Steps 3-6 are written but not yet
-run — same network-access constraint as `sapore/scripts/register-sepolia-ens`:
+Steps 1-3 have been broadcast to Sepolia (see `docs/engineering-log.md` for
+the deployed `UserRegistry`, shared resolver, and `SaporeChefRegistrar`
+addresses, and its diagnosis history for step 2's `initialize()` argument
+mismatch and a caught access-control gap in `register()`, both fixed before
+anything shipped). Steps 4-6 are written but not yet run — same
+network-access constraint as `sapore/scripts/register-sepolia-ens`:
 this session has no RPC access, so every step below runs on your machine.
 
 ### Step 1 — deploy the UserRegistry proxy, and point `sapore.eth` at it
@@ -87,22 +85,15 @@ dedicated backend signer instead.
 
 ### Step 4 — authorize the registrar
 
-```ts
-const ROLE_REGISTRAR = 1n << 0n
-await wallet.writeContract({
-  address: userRegistryAddress, // step 1's output
-  abi: [{
-    name: 'grantRootRoles', type: 'function', stateMutability: 'nonpayable',
-    inputs: [
-      { name: 'roleBitmap', type: 'uint256' },
-      { name: 'account', type: 'address' },
-    ],
-    outputs: [{ name: '', type: 'bool' }],
-  }],
-  functionName: 'grantRootRoles',
-  args: [ROLE_REGISTRAR, registrarAddress], // step 3's output
-})
+```bash
+cd ../../deploy   # back to contracts/subname-registrar/deploy
+node 04-authorize-registrar.mjs <registrarAddress>   # step 3's output
 ```
+
+Grants `SaporeChefRegistrar` `ROLE_REGISTRAR` on the `UserRegistry` —
+`grantRootRoles(roleBitmap, account)` and `ROLE_REGISTRAR`'s bit value
+(`1 << 0`) are both confirmed against verified Sepolia source
+(`EnhancedAccessControl.sol` / `RegistryRolesLib.sol`), not just docs.
 
 Not `ROLE_REGISTRAR | ROLE_RENEW` — this contract has no `renew()`.
 
