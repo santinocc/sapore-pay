@@ -632,3 +632,57 @@ package. All builds (`tsc`, `vite build`) and existing test suites (20 + 2
 tests) pass; Biome lint is clean. Not yet click-tested against a running
 `apps/service` in this session — that and Privy are the two things left
 before this feature branch is fully closed out.
+
+
+### Thu 25 Sept, later still — Privy embedded wallets
+
+New branch, `feat/privy-embedded-wallet`, off `main` after both prior PRs
+landed (see the correction two entries up — PR #3 merged early, PR #4
+carried everything that came after it).
+
+Before writing anything, checked `docs/sapore-api-contract.md` and
+`packages/privy`'s own scaffold comment, since both already describe how
+Privy is meant to fit into the real product: a SIWE handoff
+(`POST /auth/wallet-login`) to a Sapore account, or Privy's "custom auth"
+trusting an existing Sapore login. Both presume a Sapore login this
+isolated demo (`apps/web`) doesn't have, and the API contract marks that
+endpoint "thin glue; not judged" — it lives in the private repo, out of
+this repo's scope. Decided (confirmed with Santino) to use Privy's own
+standalone login instead, scoped to what this demo needs: a real wallet
+that can sign real transactions. The full account-linking story is
+deferred to whenever the private repo's side of it gets built, on its own
+timeline.
+
+Checked Privy's actual installed type declarations before writing any
+usage code, same discipline as the ENSv2 contract work — `getEthereumProvider(): Promise<EIP1193Provider>`
+on `ConnectedWallet`, `getEmbeddedConnectedWallet()` to find the Privy
+wallet specifically, and confirmed `Chain` (from `@privy-io/chains`) is
+structurally a plain viem chain object — `sepolia` from `viem/chains`
+passes straight through, per the package's own doc example.
+
+Built:
+- `apps/web/src/lib/privyWallet.ts` — `useChefWallet()`, wrapping Privy's
+  auth/wallet state into a `ChefWalletState` discriminated union (loading /
+  logged_out / no_embedded_wallet / ready / error) and building a viem
+  `WalletClient` from the embedded wallet's EIP-1193 provider once ready.
+- `apps/web/src/screens/WalletConnect.tsx` — same "every outcome is a
+  designed screen, transitions are explicit buttons" pattern as
+  ChefOnboarding/EnsClaim, including not auto-advancing once the wallet is
+  ready.
+- `createPrivyRecordWriter()` in `recordWriter.ts` — calls the same
+  `writeChefRecords()` from `@sapore-pay/ens` directly with the Chef's own
+  wallet, no backend involved. `createOnChainRecordWriter()` (backend-
+  signed) stays too — still real, still useful when no wallet is connected.
+- Wired into `App.tsx`: the wallet gate only appears when "Real (Sepolia)"
+  mode is selected for the ENS-claim or payout steps, since the simulated
+  paths never touch a real address at all. Claiming stays backend-signed
+  regardless (`register()` only accepts calls from its deployed `backend`
+  address) — the wallet's job there is supplying the real `ownerAddress`,
+  not signing the registration itself.
+
+`VITE_PRIVY_APP_ID` isn't set yet — that's the one manual step left (create
+an app at dashboard.privy.io, enable email login + embedded wallets),
+same shape as `WORLD_APP_ID`'s. Until then, `WalletConnect` reports "not
+configured" rather than crashing. `tsc`, `vite build`, and the existing
+20-test suite all pass; Biome lint is clean. Not yet click-tested against a
+real Privy app id (needs that manual step first).
