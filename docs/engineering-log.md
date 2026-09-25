@@ -28,6 +28,7 @@ Recorded as encountered, tagged by provider. Rolled up into the World debrief at
 | # | Provider | What | Cost |
 |---|---|---|---|
 | 1 | Tooling (not a sponsor) | Push access to the public repo was refused on the first push — the GitHub App was not installed on `santinocc/sapore-pay`, so the scaffold commit sat local until it was fixed. Not a sponsor issue, but it is the first thing that cost wall-clock time. | ~20 min |
+| 2 | Environment (not a sponsor) | `mongodb-memory-server` fetches a `mongod` binary on first run and every MongoDB download host is denied by the build environment's network policy. No DB-backed test can run locally, so CI is the only place they execute. Shapes the whole build: push early, read the run, fix, push again. | ongoing |
 
 ---
 
@@ -188,3 +189,30 @@ first run and every MongoDB download host is denied by the environment's
 network policy. The 20 signature and payload-parsing unit tests are pure and do
 pass locally. The route tests need CI, which is an argument for opening the PR
 early rather than at the end.
+
+### 23:05 — CI, and what it caught
+
+Opened `santinocc/sapore#13` on the private repo specifically to get the 11
+route tests executed somewhere with a `mongod`. It came back red, which was the
+point.
+
+Both failures were in the test file, not the route. The interesting one: two
+tests expected 400 and got 401, and **the route was right**. `src/config.ts`
+reads `process.env` once at module load, so setting `PAY_WEBHOOK_SECRET` in
+`beforeAll` runs after `import { app }` has already frozen the config at `''` —
+and an unset secret rejects everything, exactly as designed. The security
+property held; the test never armed it. Fixed with a Jest `setupFiles` hook,
+which runs before test modules are imported.
+
+Worth keeping as a note on how to work without a local database: both root
+causes were still provable here. The config-timing test passes with the hook and
+reproduces the CI failure verbatim (`Received: ""`) under `--setupFiles=`, and
+the recipe fixture was checked with `RecipeModel.validateSync()`, which needs no
+connection. Guessing at a red CI and pushing hopefully is the expensive habit;
+finding a way to reproduce locally, even partially, is worth the ten minutes.
+
+Second run: **384 passed, 384 total, 26 suites**. The previous run was 373
+passed with 11 failed — same total, so all 11 route tests ran rather than being
+skipped, and the 373 pre-existing tests confirm the fulfilment refactor did not
+break the legacy paste-a-tx-hash flow. Lint, server build and Docker build green
+too.
