@@ -490,3 +490,40 @@ tx:      0xcb1a8fc941d6b668363e7b1d37030fb28773390dc1e60ca589b60f976e5ef45e
 Next: `SaporeChefRegistrar.sol` via Foundry (step 3), then authorize it on
 `UserRegistry` (step 4), then a real Chef registration to exercise steps 5-6
 (`isAvailable`/`register`/`03-authorize-chef.mjs`) end to end.
+
+
+### Thu 25 Sept, later still — first real Foundry compile, and a caught access-control gap
+
+`forge build` compiled clean once Foundry was actually installed
+(`foundryup`) — but the very first attempt failed on `@notice` used on a
+file-level (free) variable, which Solidity's NatSpec rules don't allow
+(only `@dev` is valid there). One-line fix.
+
+The second `forge build` succeeded with two lint warnings, both real:
+- `missing-zero-check` on the constructor's `beneficiary` param — added a
+  guard, since it's immutable and a zero mistake would be permanent.
+- `reentrancy-events` on emitting `ChefNameRegistered` after
+  `REGISTRY.register()` — accepted as-is (documented inline) since the
+  event's `tokenId` only exists after that call returns, and the call is
+  register()'s own trusted parent contract, not attacker-controlled.
+
+While writing that second comment, re-reading `register()` turned up
+something forge's linter didn't flag but should have been obvious on
+review: **the function had no access control at all.** The doc comments
+claimed "only Sapore's backend (holding ROLE_REGISTRAR) can call
+register()" — true of who can call the *underlying* `UserRegistry.register()`
+(restricted to ROLE_REGISTRAR holders, which this contract will hold once
+step 4 runs), but `SaporeChefRegistrar.register()` itself had zero
+restriction on `msg.sender`. Anyone could have called it directly, for any
+label, for any owner, for free, completely bypassing the World ID check the
+whole product design assumes happens before this contract is ever reached.
+
+Fixed before anything was deployed (constructor args are immutable, so this
+had to be caught now or never): added a `BACKEND` immutable address and an
+`Unauthorized()` revert in `register()`. Constructor now takes a 5th arg;
+`sapore.eth`'s admin key is used for it in this deployment since that's what
+Sapore's backend controls throughout the event, though a production
+deployment would want a dedicated backend signer with a narrower blast
+radius than the account that also owns `sapore.eth` and the shared resolver.
+
+Not yet re-run through `forge build` after this change or deployed.

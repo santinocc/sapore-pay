@@ -75,12 +75,15 @@ forge install ensdomains/contracts-v2
 forge build
 forge create src/SaporeChefRegistrar.sol:SaporeChefRegistrar \
   --rpc-url $SEPOLIA_RPC_URL --private-key $ENS_OWNER_PRIVATE_KEY --broadcast \
-  --constructor-args $USER_REGISTRY 0xBA11ebdB3f9a2c5946D8629517f06364E53A2E10 $ENS_OWNER_ADDRESS 0
+  --constructor-args $USER_REGISTRY 0xBA11ebdB3f9a2c5946D8629517f06364E53A2E10 $ENS_OWNER_ADDRESS 0 $ENS_OWNER_ADDRESS
 ```
 
 `$USER_REGISTRY` is step 1's output. Payment token is MockUSDC (per
 `scripts/register-sepolia-ens`); price is `0` — see the contract's doc
-comment for why.
+comment for why. The last argument, `backend`, is the only account allowed
+to call `register()` — using the same admin key here since it's what Sapore's
+backend controls throughout this event; a real deployment would use a
+dedicated backend signer instead.
 
 ### Step 4 — authorize the registrar
 
