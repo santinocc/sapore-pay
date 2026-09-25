@@ -567,3 +567,18 @@ repo. Checks `isAvailable`, calls `register()`, parses the
 run against Sepolia — that run is what finally exercises the entire
 pipeline (registry → resolver → registrar → a real Chef name → delegated
 write access via 03-authorize-chef.mjs) end to end for the first time.
+
+
+### Thu 25 Sept, later still — first Chef registered, pipeline verified end to end
+
+`05-register-chef.mjs` ran clean on the first try:
+
+```
+marco.sapore.eth — ENSv2 Sepolia
+tokenId: 38611655076938727590367281247710421354087380433560551197690241304350467031040
+tx:      0xc934cce82a7178413fec43ba981ec065e352194ff81eaf4a922e491f96d85cce
+```
+
+Registry → shared resolver → registrar → a real Chef subname, all real,
+all on Sepolia. Only step 6 (delegating `marco`'s own write access via
+`03-authorize-chef.mjs`) is left to close the loop.
