@@ -6,8 +6,8 @@ import {IPermissionedRegistry} from "@ensdomains/contracts-v2/registry/interface
 import {IRegistry} from "@ensdomains/contracts-v2/registry/interfaces/IRegistry.sol";
 import {RegistryRolesLib} from "@ensdomains/contracts-v2/registry/libraries/RegistryRolesLib.sol";
 
-/// @notice The role bitmap a Chef receives on their own `<alias>.sapore.eth`
-///         resource at registration.
+/// @dev The role bitmap a Chef receives on their own `<alias>.sapore.eth`
+///      resource at registration.
 ///
 /// Deliberately narrower than ENSv2's own tutorial default (which also
 /// grants ROLE_SET_SUBREGISTRY[_ADMIN] and ROLE_CAN_TRANSFER_ADMIN). Two
