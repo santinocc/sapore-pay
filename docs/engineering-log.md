@@ -309,3 +309,42 @@ case) holds no roles on the parent's resolver by default and gets
 `authorize*Roles`. That's exactly the "Chef edits only their own record,
 Sapore can revoke" story — it's not a permission model we're grafting onto
 ENS, it's the one ENSv2 ships.
+
+
+### Fri 25 Sept, later — SaporeChefRegistrar contract written (not yet deployed)
+
+Santino provided the "For Contract Developers" ENSv2 guide directly — the
+missing piece from `createOnChainSubnameClaimer`'s stub. Wrote
+`contracts/subname-registrar/SaporeChefRegistrar.sol` against it, with two
+product-driven deviations from the tutorial's default rather than a literal
+copy:
+
+- **A narrower role bitmap.** The tutorial's default grants five roles
+  including `ROLE_CAN_TRANSFER_ADMIN` — which, per the docs, IS the transfer
+  permission itself, not a meta-role. Granting it to Chefs would let them
+  sell or trade a verified identity, which is a straight hole in the World
+  ID story: a sybil buys a name instead of proving uniqueness. Chefs get
+  `ROLE_SET_RESOLVER[_ADMIN]` only. Worth stating in the submission: the
+  same "minimum sufficient" argument the World integration makes for its
+  credential, made here for a role bitmap.
+- **No renewal.** Chef identities are permanent, not a subscription —
+  `expiry = type(uint64).max`, one less role to grant at deployment.
+
+Also resolved, in conversation rather than in docs: whether Cookers and
+Chefs should have separate wallets, and whether Cookers should get their own
+ENS subnamespace (`<alias>.cooker.sapore.eth`). Decided against both — one
+Privy wallet per person for both roles (a Chef's payout wallet is a
+destination, not a treasury; the batch payout job already holds funds in
+escrow, so there's no real security reason to split), and no ENS name for
+Cookers at all (nobody looks up a Cooker by name; manufacturing one would be
+the exact over-application the World card penalizes, applied to ENS
+instead).
+
+**Not deployed.** Two real blockers, not busywork: deploying this needs a
+UserRegistry proxy via the Verifiable Factory, and the guide for that
+("Deploying a Registry Proxy") hasn't been fetched — same network
+restriction that blocks this session from reaching docs.ens.domains
+directly. And Foundry isn't installed in this sandbox and can't be (same
+restriction), so the contract has not been compiled, only written to match
+the tutorial's interfaces exactly. Those are different claims; only the
+second is still unverified.
