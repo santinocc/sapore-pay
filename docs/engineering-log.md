@@ -686,3 +686,29 @@ same shape as `WORLD_APP_ID`'s. Until then, `WalletConnect` reports "not
 configured" rather than crashing. `tsc`, `vite build`, and the existing
 20-test suite all pass; Biome lint is clean. Not yet click-tested against a
 real Privy app id (needs that manual step first).
+
+
+### Thu 25 Sept, later still — a real cross-platform build gap in packages/core
+
+Santino hit `pnpm build` failing on `packages/core` with "Cannot find name
+'TextEncoder'" / "'TextDecoder'" on his machine (macOS, Node 20 then 22),
+even after `nvm use 22`, Corepack reinstalling pnpm, and a full clean
+`node_modules` wipe + reinstall. None of those fixed it. Reproduced the
+exact same clean-wipe + `pnpm build` in this sandbox (Linux) against the
+identical lockfile — it built fine every time.
+
+Root cause: `packages/core/src/memo.ts` uses `TextEncoder`/`TextDecoder`,
+but `packages/core` never declared `@types/node` as its own dependency —
+it only had those globals typed by accident, via TypeScript's automatic
+`@types/*` discovery picking up `@types/node` hoisted transitively through
+`vitest` (which depends on it). That kind of implicit, hoisting-dependent
+resolution is exactly the sort of thing that can differ between package
+managers, OS, or even just install order, without the lockfile itself
+changing — which fits both machines resolving the *same* lockfile but
+disagreeing on whether those types were visible.
+
+Fixed properly rather than chasing the platform difference further: added
+`@types/node` as an explicit `packages/core` devDependency (same version
+range as `apps/service` already uses). No other `packages/*` reference
+Node/Web-standard globals directly, so none of them were exposed to this.
+`pnpm build`, `pnpm -r test`, and Biome all pass clean after the fix.
