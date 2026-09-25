@@ -7,12 +7,14 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -p tsconfig.json && vite build",
+    "start": "serve -s dist -l ${PORT:-4173}",
     "preview": "vite preview",
     "test": "vitest run --passWithNoTests"
   },
   "dependencies": {
     "react": "^19.1.0",
-    "react-dom": "^19.1.0"
+    "react-dom": "^19.1.0",
+    "serve": "^14.2.6"
   },
   "devDependencies": {
     "@types/react": "^19.1.0",
