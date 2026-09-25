@@ -11,13 +11,13 @@ behind the ENS card's "Enhanced Access Control... central, not cosmetic"
 requirement, and it's what `apps/web`'s `createOnChainSubnameClaimer` will
 call once deployed.
 
-## Status: steps 1-3 run successfully; steps 4-6 not yet run
+## Status: steps 1-4 run successfully; steps 5-6 not yet run
 
-Steps 1-3 have been broadcast to Sepolia (see `docs/engineering-log.md` for
+Steps 1-4 have been broadcast to Sepolia (see `docs/engineering-log.md` for
 the deployed `UserRegistry`, shared resolver, and `SaporeChefRegistrar`
 addresses, and its diagnosis history for step 2's `initialize()` argument
 mismatch and a caught access-control gap in `register()`, both fixed before
-anything shipped). Steps 4-6 are written but not yet run — same
+anything shipped). Steps 5-6 are written but not yet run — same
 network-access constraint as `sapore/scripts/register-sepolia-ens`:
 this session has no RPC access, so every step below runs on your machine.
 
@@ -97,11 +97,16 @@ Grants `SaporeChefRegistrar` `ROLE_REGISTRAR` on the `UserRegistry` —
 
 Not `ROLE_REGISTRAR | ROLE_RENEW` — this contract has no `renew()`.
 
-### Step 5 — verify
+### Step 5 — register a Chef
 
-`isAvailable("alice")` should read `true`; after
-`register("alice", chefWallet, resolverAddress)` (resolver = step 2's
-output), it should read `false`.
+```bash
+node 05-register-chef.mjs alice 0xChefWalletAddress
+```
+
+Checks `isAvailable`, then calls `register(label, chefWallet,
+resolverAddress)` (resolver = step 2's output) and prints the minted
+`tokenId`. Must be signed by whichever address step 3's deploy used as
+`backend` — `register()` reverts `Unauthorized()` otherwise.
 
 ### Step 6 — delegate the Chef's own write access
 

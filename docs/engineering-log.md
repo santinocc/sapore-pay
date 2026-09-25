@@ -551,3 +551,19 @@ both turned out correct as documented, unlike the resolver's `initialize()`.
 Wrote `04-authorize-registrar.mjs` (matching the pattern of scripts 01-03)
 to replace the README's bare TypeScript snippet with something actually
 runnable; dry-run tested, not yet run against Sepolia.
+
+
+### Thu 25 Sept, later still — registrar authorized, register-chef script added
+
+`04-authorize-registrar.mjs` ran clean: `SaporeChefRegistrar`
+(`0x45347E1a412a16f494d945Ed3402A773A07fc5D1`) now holds `ROLE_REGISTRAR` on
+`UserRegistry`, tx `0xa232aca1c72e8e52689813c566ed12f0e6c6686bb34e93850b8ac13e795c89a9`.
+
+Wrote `05-register-chef.mjs` for step 5 — the first script in this whole
+deploy sequence whose ABI didn't need any doc/Etherscan verification, since
+`SaporeChefRegistrar.sol` is our own source, compiled and deployed from this
+repo. Checks `isAvailable`, calls `register()`, parses the
+`ChefNameRegistered` event for the minted `tokenId`. Dry-run tested, not yet
+run against Sepolia — that run is what finally exercises the entire
+pipeline (registry → resolver → registrar → a real Chef name → delegated
+write access via 03-authorize-chef.mjs) end to end for the first time.
