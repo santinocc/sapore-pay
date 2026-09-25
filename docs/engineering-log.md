@@ -605,3 +605,30 @@ honest stub) to `SaporeChefRegistrar`, and `createOnChainRecordWriter` to
 actually call `writeChefRecords()` against `marco.sapore.eth`'s resolver
 now that write access is delegated — both are real product code changes
 left for the PR or a follow-up, not deploy-script work.
+
+
+### Thu 25 Sept, later still — apps/web wired to the deployed contracts
+
+Added a "Real (Sepolia)" mode to the ENS-claim and payout-records demo
+steps, backed by three new apps/service routes (`GET
+/ens/chef/:label/availability`, `POST /ens/chef/claim`, `POST
+/ens/chef/records`). Backend-mediated rather than client-side by
+necessity, not choice: `SaporeChefRegistrar.register()` only accepts calls
+from the address deployed as `backend`, and that key can never ship to the
+browser.
+
+Decided against building Privy embedded wallets in the same pass — a
+materially larger, separate integration (wallet creation/login UX, session
+handling, a signing flow) — in favor of shipping the real on-chain wiring
+now and sequencing Privy as the next task. Structured so nothing here needs
+rework when Privy lands: `writeChefRecords()` moved out of `apps/web` into
+the shared `@sapore-pay/ens` package (`packages/ens/src/chefRecords.ts`),
+so `apps/service` (today) and `apps/web` (once a Chef's own wallet client
+exists) call the exact same function — only `recordWriter.ts`'s
+implementation swaps from "call the backend" to "call it directly."
+
+`apps/web`'s `ensRecords.ts` is now a thin re-export of the relocated
+package. All builds (`tsc`, `vite build`) and existing test suites (20 + 2
+tests) pass; Biome lint is clean. Not yet click-tested against a running
+`apps/service` in this session — that and Privy are the two things left
+before this feature branch is fully closed out.
