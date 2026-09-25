@@ -19,7 +19,7 @@ not it is flattering.
 | **First successful World ID verification** | — | _pending_ | — |
 | First ENSv2 Sepolia name resolved by the service | — | _pending_ | — |
 | First memo'd Tempo transfer reconciled to an order | — | _pending_ | — |
-| `apps/web` live on a public URL | +6:00 | _pending_ | — |
+| `apps/web` live on a public URL | +6:00 | _pending — Railway services not created yet_ | — |
 
 ## Friction / doc gaps
 
@@ -27,7 +27,7 @@ Recorded as encountered, tagged by provider. Rolled up into the World debrief at
 
 | # | Provider | What | Cost |
 |---|---|---|---|
-| 1 | Tooling (not a sponsor) | Push access to the public repo was refused on the first push — the GitHub App is not installed on `santinocc/sapore-pay`, so the scaffold commit sat local until it was fixed. Not a sponsor issue, but it is the first thing that cost wall-clock time. | see entry 21:40 |
+| 1 | Tooling (not a sponsor) | Push access to the public repo was refused on the first push — the GitHub App was not installed on `santinocc/sapore-pay`, so the scaffold commit sat local until it was fixed. Not a sponsor issue, but it is the first thing that cost wall-clock time. | ~20 min |
 
 ---
 
@@ -103,3 +103,47 @@ This is not a disaster — that code is private-side and not judged — but it m
 inside the clock. In particular, MVP item 1 (order → pay → webhook → recipe unlocked) cannot
 complete without `POST /webhooks/pay` on the Sapore API, and the World nullifier and ENS
 name need somewhere to land. Budgeting for it now rather than discovering it at hour 20.
+
+### 21:55 — unblocked, pushed, CI green
+
+GitHub App installed. Four commits pushed to `main`; CI (`pnpm lint && build && test` on
+Node 22) is green on both pushes. The repo is public and the kickoff timestamp on `793d047`
+survived intact — the block cost about twenty minutes and nothing else.
+
+### 22:05 — Railway deploy config, and a correction to the plan
+
+Committed `railway.service.json` and `railway.web.json` as config-as-code rather than
+clicking settings into a dashboard, so the deployment is reviewable and reproducible.
+
+**The obvious configuration is wrong here and it is worth writing down why**, because it is
+the kind of thing that eats an hour at 3am. The instinct for a monorepo on Railway is to set
+each service's **Root Directory** to `apps/service` and `apps/web`. That is Railway's
+*isolated* monorepo pattern, and this is not an isolated monorepo: `apps/service` declares
+`"@sapore-pay/core": "workspace:*"`, so a build rooted at `apps/service` never sees
+`pnpm-workspace.yaml` and `pnpm install` cannot resolve the link. Both services therefore
+build from the repo root with `pnpm -r build`, and `watchPatterns` keeps each from
+redeploying on the other's commits. `apps/web` has no workspace dependency *today* and would
+survive a per-service root — right up until it takes `@sapore-pay/sdk`, which it will.
+
+`apps/web` is served by `serve -s dist`, moved to `dependencies` rather than
+`devDependencies` so a production install keeps it. Both start commands were smoke-tested
+locally before committing: `/health` returns `{"status":"ok"}` and the web app returns 200 on
+`/` and on an unknown client route (SPA fallback works, which client-side routing will need).
+
+### 22:15 — documentation audit
+
+Swept every planning doc for leftovers from the 2026-09-25 decision to drop the World App
+mini app. Four documents still described `apps/mini-app`, MiniKit `pay` and a Developer
+Portal mini app listing as live plans — including the public repo's own runbook, whose step 6
+said to install `@worldcoin/minikit-js` into a package that does not exist. Corrected, along
+with two `sapore.food` hosts that were never set up.
+
+Worth noting as a process observation rather than a complaint: the decision itself was
+recorded well (a full ADR in `DECISIONS.md`), but the *consequences* of it were left scattered
+across four files. A decision log that does not fan out into the documents it invalidates is
+how a team ends up building the thing it already decided not to build.
+
+Also wrote `docs/hackathon/manual-tasks.md` in the private repo — every task needing a human
+(World Developer Portal app and `chef-onboarding` action, a Sepolia ENS name, a funded Tempo
+Moderato key, Privy, Railway, a World-App-capable phone), ordered by what each one blocks.
+None of them had been done at kickoff, and the top three each block a prize outright.
