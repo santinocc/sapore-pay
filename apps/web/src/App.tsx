@@ -152,7 +152,10 @@ export function App() {
         {needsWallet && <WalletConnect onReady={setChefWallet} />}
         {step.kind === 'ens-claim' && !needsWallet && (
           <EnsClaim
-            key={`claim-${claimMode}-${claimScenario}-${claimRun}`}
+            // Deliberately not keyed on claimMode: switching Simulated <->
+            // Real shouldn't wipe an alias you already typed. claimScenario
+            // + claimRun still force a fresh run for explicit chip clicks.
+            key={`claim-${claimScenario}-${claimRun}`}
             claimer={claimer}
             ownerAddress={
               claimMode === 'real' && chefWallet
@@ -164,7 +167,7 @@ export function App() {
         )}
         {step.kind === 'payout' && !needsWallet && (
           <PayoutRecords
-            key={`records-${recordMode}-${recordScenario}-${recordRun}`}
+            key={`records-${recordScenario}-${recordRun}`}
             writer={recordWriter}
             fullName={step.fullName}
           />

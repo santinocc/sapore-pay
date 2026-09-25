@@ -712,3 +712,51 @@ Fixed properly rather than chasing the platform difference further: added
 range as `apps/service` already uses). No other `packages/*` reference
 Node/Web-standard globals directly, so none of them were exposed to this.
 `pnpm build`, `pnpm -r test`, and Biome all pass clean after the fix.
+
+
+### Thu 25 Sept, later still — first real click-through found two real bugs
+
+Santino ran the actual "Real (Sepolia)" flow end to end for the first
+time: World ID (simulated) → wallet gate → real Privy email OTP → a real
+embedded wallet ("Wallet ready") → back to the claim form. Confirms the
+whole Privy wiring works — real modal, real login, real wallet, exactly
+the order intended (World ID, then wallet, then the ENS step that needs
+it).
+
+Two real bugs found along the way, both fixed:
+
+1. **Stuck forever on "Checking availability."** `EnsClaim.tsx`'s
+   `submit()` had no error handling at all. `createOnChainSubnameClaimer`'s
+   `isAvailable()` returns a plain boolean with no error channel, so when
+   `apps/service` wasn't running (never started in this test), the
+   underlying `fetch` rejected, threw uncaught out of `submit()`, and left
+   the component sitting in `{kind: 'checking'}` forever — no further
+   `setPhase` call was ever going to run. Wrapped the whole function body
+   in try/catch, mapping any thrown error to the existing `failed` /
+   `error` outcome. Applied the same defensive wrap to `PayoutRecords.tsx`,
+   since `writeChefRecords()` also has an unguarded `normalize()`/
+   `namehash()` call before its own internal try/catch.
+2. **"Asking for the ENS name again."** Toggling Simulated ↔ Real
+   remounted `EnsClaim`/`PayoutRecords` from scratch (their `key` included
+   `claimMode`/`recordMode`), wiping anything already typed. A real Chef
+   would only ever be in one mode for their whole session, so this never
+   would have surfaced outside of demo-testing both modes back to back —
+   but it's still a real rough edge worth fixing for judges doing exactly
+   that. Dropped `claimMode`/`recordMode` from the key; `claimScenario`/
+   `recordScenario` + the run counters still force a fresh run for
+   explicit scenario-chip clicks.
+
+Also discussed, not built: Santino's instinct that Privy wallet creation
+should happen at signup — before choosing Cooker or Chef, one OTP not
+two — is correct and already the documented direction, not a new idea.
+`packages/privy`'s own scaffold plans exactly this via Privy's "custom
+auth" (an existing Sapore session token becomes the credential Privy
+trusts, so wallet creation rides on the same login rather than a separate
+one), and the "one Privy wallet per person, for both roles" decision is
+already logged (see the 25 Sept entry on wallet/ENS-namespace design).
+The two-OTP feel in this demo is specific to the standalone-Privy-login
+scope decision made for this isolated demo (no Cooker signup flow exists
+here to attach wallet creation to, and the real unification needs the
+private repo's auth system) — not a flaw to fix in this repo's narrow
+judged surface. Logged here as the confirmed direction for whenever that
+work starts, rather than built now.

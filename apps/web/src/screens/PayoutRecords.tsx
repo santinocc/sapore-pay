@@ -43,15 +43,19 @@ export function PayoutRecords({
       return
     }
     setPhase({ kind: 'writing' })
-    const outcome = await writer.write(fullName, {
-      payoutAddress: address as `0x${string}`,
-    })
-    if (outcome.status === 'written') {
-      setPhase({ kind: 'written', txHash: outcome.txHash })
-    } else if (outcome.status === 'error') {
-      setPhase({ kind: 'error', message: outcome.message })
-    } else {
-      setPhase({ kind: outcome.status })
+    try {
+      const outcome = await writer.write(fullName, {
+        payoutAddress: address as `0x${string}`,
+      })
+      if (outcome.status === 'written') {
+        setPhase({ kind: 'written', txHash: outcome.txHash })
+      } else if (outcome.status === 'error') {
+        setPhase({ kind: 'error', message: outcome.message })
+      } else {
+        setPhase({ kind: outcome.status })
+      }
+    } catch (err) {
+      setPhase({ kind: 'error', message: (err as Error).message })
     }
   }
 

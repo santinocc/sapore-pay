@@ -47,24 +47,37 @@ export function EnsClaim({
       return
     }
     setPhase({ kind: 'checking', alias })
-    const available = await claimer.isAvailable(alias)
-    if (!available) {
+    // Wrapped end to end: isAvailable() has no error channel of its own
+    // (it returns a plain boolean), so a network failure — e.g.
+    // apps/service isn't running — would otherwise throw uncaught here and
+    // leave the UI stuck on "Checking availability" forever, with no
+    // setPhase call left to run.
+    try {
+      const available = await claimer.isAvailable(alias)
+      if (!available) {
+        setPhase({
+          kind: 'failed',
+          outcome: { status: 'taken', fullName: `${alias}.sapore.eth` },
+        })
+        return
+      }
+      setPhase({ kind: 'claiming', alias })
+      const outcome = await claimer.claim(alias, ownerAddress)
+      if (outcome.status === 'claimed') {
+        // Show the confirmation — don't advance yet. Auto-advancing here
+        // would skip past the one screen that proves the claim actually
+        // happened (the tx hash), same reasoning as the World onboarding
+        // screen's explicit "Claim your name" button instead of an
+        // auto-redirect.
+        setPhase({ kind: 'claimed', outcome })
+      } else {
+        setPhase({ kind: 'failed', outcome })
+      }
+    } catch (err) {
       setPhase({
         kind: 'failed',
-        outcome: { status: 'taken', fullName: `${alias}.sapore.eth` },
+        outcome: { status: 'error', message: (err as Error).message },
       })
-      return
-    }
-    setPhase({ kind: 'claiming', alias })
-    const outcome = await claimer.claim(alias, ownerAddress)
-    if (outcome.status === 'claimed') {
-      // Show the confirmation — don't advance yet. Auto-advancing here would
-      // skip past the one screen that proves the claim actually happened
-      // (the tx hash), same reasoning as the World onboarding screen's
-      // explicit "Claim your name" button instead of an auto-redirect.
-      setPhase({ kind: 'claimed', outcome })
-    } else {
-      setPhase({ kind: 'failed', outcome })
     }
   }
 
