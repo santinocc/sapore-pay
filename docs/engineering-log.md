@@ -424,3 +424,51 @@ as compromised — if anyone else used it to deploy anything at that exact
 predictable address, this call would revert on the collision with exactly
 this symptom. Added `ENS_RESOLVER_SALT_VERSION` as an env override so
 Santino can test a fresh address directly rather than guess further.
+
+
+### Thu 25 Sept, later still (the actual fix) — initialize() only takes two arguments
+
+Santino tried `ENS_RESOLVER_SALT_VERSION=1` — different salt, different
+proxy address, identical zero-data revert. That ruled out the collision
+theory: whatever's wrong is not address-specific, it's systematic.
+
+At that point every diagnostic available from calldata and docs alone was
+exhausted, so the next step was reading the actual deployed source instead
+of inferring it — both `VerifiableFactory` and `PermissionedResolverImpl`
+are verified on Sepolia Etherscan. Santino found `PermissionedResolver.sol`
+in the file tree and pasted the real `initialize`:
+
+```solidity
+function initialize(address admin, uint256 roleBitmap) external initializer {
+    if (admin == address(0)) revert InvalidOwner();
+    __UUPSUpgradeable_init();
+    _grantRoles(ROOT_RESOURCE, roleBitmap, admin, false);
+}
+```
+
+Two arguments, not three. Every version of this script — including the
+doc's own "Deploying a Resolver Proxy" example, which we'd matched
+byte-for-byte — encoded a call to `initialize(address,uint256,bytes[])`, a
+function that doesn't exist on the deployed contract. Selector
+`0x7058b559` (3-arg) vs. the real `0xcd6dc687` (2-arg) — the delegatecall
+never matched anything, hence the empty revert data every single time,
+regardless of which roleBitmap or which salt we tried. Both of those were
+red herrings chased down a wrong assumption, not actual causes.
+
+**Why the docs were wrong**: the "Permissioned Resolver" page itself says
+"The contracts and interfaces described here are not yet final and may
+change prior to mainnet deployment" — this is exactly that. The Verifiable
+Factory doc's "Deploying a Resolver Proxy" example matches the *documented*
+interface, which had already drifted from the *deployed* one by the time we
+tested it against Sepolia. Three rounds of guessing (bitmap, then CREATE2
+collision) were spent on a premise — "the docs describe what's deployed" —
+that doesn't hold for pre-mainnet contracts. Verified source on the block
+explorer is ground truth here in a way the docs currently aren't; worth
+checking it earlier next time a revert survives a byte-for-byte match with
+documented examples.
+
+Fixed `02-deploy-shared-resolver.mjs` to call the real 2-arg `initialize`.
+No functional loss: the removed `setters` parameter would only have bundled
+initial record-setting into the same transaction, and
+`writeChefRecords()` in `apps/web` already writes records as a separate
+call regardless. Not yet re-run against Sepolia.

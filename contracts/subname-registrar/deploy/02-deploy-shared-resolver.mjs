@@ -11,17 +11,31 @@
  * Resolver" doc's "Delegating a Single Text Key" example. This script only
  * deploys the resolver itself.
  *
- * This call has reverted twice with zero revert data, and the calldata is
- * now confirmed correct both times (matches the doc's own "Deploying a
- * Resolver Proxy" example byte-for-byte, selector included — see
- * docs/engineering-log.md for the full diagnosis history). If it reverts
- * again, ENS_RESOLVER_SALT_VERSION below is the next thing to try: the
- * resolver's CREATE2 address is fully determined by (owner, version), so if
- * something already occupies that address for version 0 — including,
- * worst case, someone else using this repo's throwaway key, which has been
- * pasted in chat and should be treated as compromised — deployProxy reverts
- * on the collision. Bumping the version gets a fresh address and would
- * confirm or rule this out directly.
+ * This reverted three times before the real cause was found: the ENSv2 docs
+ * describe `initialize(address admin, uint256 roleBitmap, bytes[] setters)`
+ * (matching the Verifiable Factory doc's generic example and the
+ * Permissioned Resolver doc's own Reference section), but the actual
+ * deployed contract — read directly from its verified Sepolia Etherscan
+ * source, `PermissionedResolver.sol` — only takes TWO arguments:
+ *
+ *   function initialize(address admin, uint256 roleBitmap) external initializer {
+ *       if (admin == address(0)) revert InvalidOwner();
+ *       __UUPSUpgradeable_init();
+ *       _grantRoles(ROOT_RESOURCE, roleBitmap, admin, false);
+ *   }
+ *
+ * Every prior attempt encoded a call to a 3-arg function that doesn't
+ * exist on this implementation, so the delegatecall never matched any
+ * function and reverted with no data — same symptom whether the roleBitmap
+ * or the salt/version changed, because neither was ever the problem. Full
+ * diagnosis history (bitmap, then collision, then this) in
+ * docs/engineering-log.md. Lesson: the docs describe the *intended*
+ * interface; pre-mainnet contracts ("not yet final" per the doc's own
+ * banner) can and did drift from it, so verified source is ground truth.
+ *
+ * There is no `setters` array to bundle initial records into this call
+ * anymore — that's fine, writeChefRecords() in apps/web always writes
+ * records as a separate transaction anyway.
  *
  * Usage: same as 01-deploy-user-registry.mjs (same package.json / .env).
  */
@@ -68,20 +82,15 @@ const verifiableFactoryAbi = parseAbi([
 ])
 
 const permissionedResolverAbi = parseAbi([
-  'function initialize(address admin, uint256 roleBitmap, bytes[] setters)',
+  'function initialize(address admin, uint256 roleBitmap)',
   'function recordVersions(bytes32 node) view returns (uint256)',
 ])
 
-// The doc's own "Deploying a Resolver Proxy" example uses a blanket
-// "every 4th bit" pattern (0x1111...1111) here — the same constant
-// 01-deploy-user-registry.mjs uses for a *different* contract. Confirmed via
-// the "Permissioned Resolver" doc's Reference section that the real
-// initialize(admin, roleBitmap, setters) signature matches what's used
-// below, so this bitmap was NOT the cause of the reverts seen so far —
-// still built from just the resolver's real roles (0, 4, 8, 12, 16, 20, 24,
-// 28, 32, 36, 124, each with an admin variant at `+128`) rather than the
-// doc's over-inclusive blanket, since that's a strictly better choice
-// either way, not a fix for anything.
+// Built from just the resolver's real roles (0, 4, 8, 12, 16, 20, 24, 28,
+// 32, 36, 124, each with an admin variant at `+128`) rather than the docs'
+// over-inclusive blanket 0x1111...1111 pattern — narrower is strictly
+// better practice, though (per the header comment) it was never what
+// caused any of the reverts.
 const RESOLVER_ROLE_BITS = [0, 4, 8, 12, 16, 20, 24, 28, 32, 36, 124]
 const RESOLVER_ALL_ROLES = RESOLVER_ROLE_BITS.reduce(
   (bitmap, bit) => bitmap | (1n << BigInt(bit)) | (1n << BigInt(bit + 128)),
@@ -106,9 +115,9 @@ async function main() {
   // owner, version) — one resolver per owner. "Owner" here is Sapore's own
   // admin account, since this is Sapore's shared resolver, not a per-Chef one.
   //
-  // The resulting proxy address is fully determined by (owner, version) —
-  // see the header comment. Override via ENS_RESOLVER_SALT_VERSION if
-  // version 0's address turns out to be occupied by something else.
+  // ENS_RESOLVER_SALT_VERSION exists from an earlier (ruled-out) collision
+  // hypothesis — kept as a harmless escape hatch in case version 0's address
+  // is ever genuinely occupied, but there's no reason to set it now.
   const version = BigInt(process.env.ENS_RESOLVER_SALT_VERSION || '0')
   const resolverSalt = BigInt(
     keccak256(
@@ -123,7 +132,7 @@ async function main() {
   const resolverInitData = encodeFunctionData({
     abi: permissionedResolverAbi,
     functionName: 'initialize',
-    args: [account.address, RESOLVER_ALL_ROLES, []],
+    args: [account.address, RESOLVER_ALL_ROLES],
   })
 
   // Sanity checks that would otherwise show up only as an opaque revert.
