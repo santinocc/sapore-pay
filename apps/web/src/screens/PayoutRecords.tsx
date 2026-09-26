@@ -122,7 +122,7 @@ export function PayoutRecords({
   return (
     <ErrorState
       message={phase.message}
-      onRetry={() => setPhase({ kind: 'input', address: '' })}
+      onRetry={() => setPhase({ kind: 'input', address: defaultAddress })}
     />
   )
 }

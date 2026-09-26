@@ -1254,3 +1254,29 @@ Fixed by passing an explicit `gas: 600_000n` on that write — comfortably
 above what a 2-4 call multicall actually costs, and most wallet providers
 use a caller-supplied gas value as-is rather than re-estimating once it's
 present. `pnpm --filter @sapore-pay/ens build` and Biome both clean.
+
+### Fri 26 Sept — funded wallet hit "insufficient funds," then a real UI bug on retry
+
+The "intrinsic gas too low" fix worked and Privy built a valid transaction
+— it just failed with "insufficient funds for gas * price + value: have 0
+want 751007651400000." Not a bug: the Privy embedded wallet is a brand new
+address that had never held any Sepolia ETH — every prior transaction
+(registration) was paid for by Sapore's backend key, and this is the first
+one the Chef's own wallet has to pay for itself. Santino funded it from
+another wallet and clicked the error screen's "Try again."
+
+That surfaced a real bug in `PayoutRecords.tsx`: the generic `ErrorState`'s
+retry handler reset `phase` to `{ kind: 'input', address: '' }` —
+hardcoded empty, not back to `defaultAddress`. Since `locked` is computed
+separately from `defaultAddress` (unaffected by the reset), the heading
+still read "You'll get paid to your sofia.sapore.eth wallet" while the
+locked mono display underneath rendered `shorten('')` — literally just
+"…" — and clicking "Set payout address" submitted that empty string,
+immediately hitting the address-format validation error. A real, visible
+inconsistency: locked copy paired with a blanked-out value.
+
+Fixed by resetting to `defaultAddress` instead of `''` on retry — the
+correct behavior once `locked` is true is "show the same wallet address
+again," not "ask the Chef to type an address a locked screen never let
+them type in the first place." `pnpm --filter @sapore-pay/web build` and
+Biome both clean.
