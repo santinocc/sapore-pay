@@ -15,8 +15,19 @@
  * resolver ABI, not a guess. What's ENSv2-specific is finding the RIGHT
  * resolver (each account gets its own instance now, there's no shared
  * Public Resolver to assume) and who's authorized to write to it (Enhanced
- * Access Control roles) — both handled below, per the guide's "Find the
- * Resolver" / "Who Can Write" sections.
+ * Access Control roles) — both handled below.
+ *
+ * Finding the resolver does NOT go through viem's built-in
+ * `getEnsResolver()` — confirmed by reading the actual deployed interface
+ * (`ensdomains/contracts-v2`'s `IRegistry.sol` on GitHub) rather than
+ * assumed: that helper resolves through the legacy ENS Registry /
+ * Universal Resolver system, which has no notion of ENSv2's new registry
+ * contracts at all, and returns null for every ENSv2 name regardless of
+ * RPC provider or timing — this was tried first and always failed
+ * identically. The real, verified function is `IRegistry.getResolver(string
+ * label) view returns (address)`, called directly on the specific registry
+ * that owns `sapore.eth`'s Chef subnames (`registryAddress` below, ENSv2's
+ * `UserRegistry` — see docs/engineering-log.md for how it was deployed).
  *
  * `setAddr(node, address)` is the ENSIP-9 default (coinType 60 / ETH
  * mainnet-shaped addresses — what every wallet reads first). The second
@@ -39,6 +50,17 @@ import { evmCoinType } from './coinType.js'
 /** Matches the app-wide TEMPO_CHAIN_ID assumption (see each app's .env.example). */
 const TEMPO_CHAIN_ID = 42431
 const TEMPO_COIN_TYPE = evmCoinType(TEMPO_CHAIN_ID)
+
+// Every name this package deals with is a Sapore Chef subname — this
+// package is inherently sapore.eth-specific already (see e.g. ensChef.ts's
+// own `${label}.sapore.eth`), so deriving the bare label back out of a full
+// name here makes an existing assumption explicit rather than adding a new
+// one.
+const PARENT_DOMAIN_SUFFIX = '.sapore.eth'
+
+const registryAbi = parseAbi([
+  'function getResolver(string label) view returns (address)',
+])
 
 const resolverAbi = parseAbi([
   'function setAddr(bytes32 node, address addr_)',
@@ -76,18 +98,41 @@ export type WriteRecordsOutcome =
  * at any time, and writing to a resolver a name no longer uses silently
  * updates records nobody reads."
  */
+// A registration another RPC node (or another provider entirely — see
+// privyWallet.ts's comment on VITE_SEPOLIA_RPC_URL) just confirmed isn't
+// guaranteed to be visible on the very next read against this client's own
+// node: public RPC endpoints load-balance across multiple backend nodes
+// that don't all advance in perfect lockstep. A few short retries absorb
+// that normal propagation jitter instead of reporting a real name as
+// falsely unclaimed the instant a claim-then-write flow runs back to back.
+const RESOLVER_LOOKUP_RETRIES = 3
+const RESOLVER_LOOKUP_RETRY_DELAY_MS = 1200
+
+// Comfortably above what a 2-4 call multicall (setAddr x2, optionally
+// setText x2) actually costs on Sepolia — see the comment where this is
+// used, on why a fixed value is needed at all.
+const WRITE_RECORDS_GAS_LIMIT = 600_000n
+
 export async function writeChefRecords(
   publicClient: PublicClient,
   walletClient: WalletClient,
   fullName: string,
   records: ChefRecords,
+  registryAddress: Address,
 ): Promise<WriteRecordsOutcome> {
   const name = normalize(fullName)
   const node = namehash(name)
+  const label = name.endsWith(PARENT_DOMAIN_SUFFIX)
+    ? name.slice(0, -PARENT_DOMAIN_SUFFIX.length)
+    : name
 
   let resolver: Address | null
   try {
-    resolver = (await publicClient.getEnsResolver({ name })) as Address | null
+    resolver = await lookupResolverWithRetries(
+      publicClient,
+      registryAddress,
+      label,
+    )
   } catch (err) {
     return { status: 'error', message: (err as Error).message }
   }
@@ -128,6 +173,16 @@ export async function writeChefRecords(
       abi: resolverAbi,
       functionName: 'multicall',
       args: [encoded],
+      // Privy's embedded-wallet provider (wrapped via viem's custom()
+      // transport in privyWallet.ts) is what actually estimates gas for
+      // this call — not a direct eth_estimateGas against the RPC node the
+      // way apps/service's backend-signed writes go — and it under-
+      // estimates for a multicall this size, rejecting the tx with
+      // "intrinsic gas too low" before the resolver ever runs. A fixed,
+      // generous limit sidesteps that provider-side estimate entirely;
+      // most wallet providers use a caller-supplied gas value as-is rather
+      // than re-estimating.
+      gas: WRITE_RECORDS_GAS_LIMIT,
     })
     await publicClient.waitForTransactionReceipt({ hash: txHash })
     return { status: 'written', txHash, resolver }
@@ -145,4 +200,28 @@ function encodeResolverCall(
   args: readonly unknown[],
 ): `0x${string}` {
   return encodeFunctionData({ abi: resolverAbi, functionName, args } as never)
+}
+
+async function lookupResolverWithRetries(
+  publicClient: PublicClient,
+  registryAddress: Address,
+  label: string,
+): Promise<Address | null> {
+  for (let attempt = 1; attempt <= RESOLVER_LOOKUP_RETRIES; attempt++) {
+    const resolver = (await publicClient.readContract({
+      address: registryAddress,
+      abi: registryAbi,
+      functionName: 'getResolver',
+      args: [label],
+    })) as Address
+    if (resolver && resolver !== '0x0000000000000000000000000000000000000000') {
+      return resolver
+    }
+    if (attempt < RESOLVER_LOOKUP_RETRIES) {
+      await new Promise((resolve) =>
+        setTimeout(resolve, RESOLVER_LOOKUP_RETRY_DELAY_MS),
+      )
+    }
+  }
+  return null
 }

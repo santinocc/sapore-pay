@@ -12,6 +12,7 @@
     "test": "vitest run --passWithNoTests"
   },
   "dependencies": {
+    "@privy-io/react-auth": "^3.45.0",
     "@sapore-pay/ens": "workspace:*",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",

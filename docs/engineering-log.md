@@ -632,3 +632,673 @@ package. All builds (`tsc`, `vite build`) and existing test suites (20 + 2
 tests) pass; Biome lint is clean. Not yet click-tested against a running
 `apps/service` in this session — that and Privy are the two things left
 before this feature branch is fully closed out.
+
+
+### Thu 25 Sept, later still — Privy embedded wallets
+
+New branch, `feat/privy-embedded-wallet`, off `main` after both prior PRs
+landed (see the correction two entries up — PR #3 merged early, PR #4
+carried everything that came after it).
+
+Before writing anything, checked `docs/sapore-api-contract.md` and
+`packages/privy`'s own scaffold comment, since both already describe how
+Privy is meant to fit into the real product: a SIWE handoff
+(`POST /auth/wallet-login`) to a Sapore account, or Privy's "custom auth"
+trusting an existing Sapore login. Both presume a Sapore login this
+isolated demo (`apps/web`) doesn't have, and the API contract marks that
+endpoint "thin glue; not judged" — it lives in the private repo, out of
+this repo's scope. Decided (confirmed with Santino) to use Privy's own
+standalone login instead, scoped to what this demo needs: a real wallet
+that can sign real transactions. The full account-linking story is
+deferred to whenever the private repo's side of it gets built, on its own
+timeline.
+
+Checked Privy's actual installed type declarations before writing any
+usage code, same discipline as the ENSv2 contract work — `getEthereumProvider(): Promise<EIP1193Provider>`
+on `ConnectedWallet`, `getEmbeddedConnectedWallet()` to find the Privy
+wallet specifically, and confirmed `Chain` (from `@privy-io/chains`) is
+structurally a plain viem chain object — `sepolia` from `viem/chains`
+passes straight through, per the package's own doc example.
+
+Built:
+- `apps/web/src/lib/privyWallet.ts` — `useChefWallet()`, wrapping Privy's
+  auth/wallet state into a `ChefWalletState` discriminated union (loading /
+  logged_out / no_embedded_wallet / ready / error) and building a viem
+  `WalletClient` from the embedded wallet's EIP-1193 provider once ready.
+- `apps/web/src/screens/WalletConnect.tsx` — same "every outcome is a
+  designed screen, transitions are explicit buttons" pattern as
+  ChefOnboarding/EnsClaim, including not auto-advancing once the wallet is
+  ready.
+- `createPrivyRecordWriter()` in `recordWriter.ts` — calls the same
+  `writeChefRecords()` from `@sapore-pay/ens` directly with the Chef's own
+  wallet, no backend involved. `createOnChainRecordWriter()` (backend-
+  signed) stays too — still real, still useful when no wallet is connected.
+- Wired into `App.tsx`: the wallet gate only appears when "Real (Sepolia)"
+  mode is selected for the ENS-claim or payout steps, since the simulated
+  paths never touch a real address at all. Claiming stays backend-signed
+  regardless (`register()` only accepts calls from its deployed `backend`
+  address) — the wallet's job there is supplying the real `ownerAddress`,
+  not signing the registration itself.
+
+`VITE_PRIVY_APP_ID` isn't set yet — that's the one manual step left (create
+an app at dashboard.privy.io, enable email login + embedded wallets),
+same shape as `WORLD_APP_ID`'s. Until then, `WalletConnect` reports "not
+configured" rather than crashing. `tsc`, `vite build`, and the existing
+20-test suite all pass; Biome lint is clean. Not yet click-tested against a
+real Privy app id (needs that manual step first).
+
+
+### Thu 25 Sept, later still — a real cross-platform build gap in packages/core
+
+Santino hit `pnpm build` failing on `packages/core` with "Cannot find name
+'TextEncoder'" / "'TextDecoder'" on his machine (macOS, Node 20 then 22),
+even after `nvm use 22`, Corepack reinstalling pnpm, and a full clean
+`node_modules` wipe + reinstall. None of those fixed it. Reproduced the
+exact same clean-wipe + `pnpm build` in this sandbox (Linux) against the
+identical lockfile — it built fine every time.
+
+Root cause: `packages/core/src/memo.ts` uses `TextEncoder`/`TextDecoder`,
+but `packages/core` never declared `@types/node` as its own dependency —
+it only had those globals typed by accident, via TypeScript's automatic
+`@types/*` discovery picking up `@types/node` hoisted transitively through
+`vitest` (which depends on it). That kind of implicit, hoisting-dependent
+resolution is exactly the sort of thing that can differ between package
+managers, OS, or even just install order, without the lockfile itself
+changing — which fits both machines resolving the *same* lockfile but
+disagreeing on whether those types were visible.
+
+Fixed properly rather than chasing the platform difference further: added
+`@types/node` as an explicit `packages/core` devDependency (same version
+range as `apps/service` already uses). No other `packages/*` reference
+Node/Web-standard globals directly, so none of them were exposed to this.
+`pnpm build`, `pnpm -r test`, and Biome all pass clean after the fix.
+
+
+### Thu 25 Sept, later still — first real click-through found two real bugs
+
+Santino ran the actual "Real (Sepolia)" flow end to end for the first
+time: World ID (simulated) → wallet gate → real Privy email OTP → a real
+embedded wallet ("Wallet ready") → back to the claim form. Confirms the
+whole Privy wiring works — real modal, real login, real wallet, exactly
+the order intended (World ID, then wallet, then the ENS step that needs
+it).
+
+Two real bugs found along the way, both fixed:
+
+1. **Stuck forever on "Checking availability."** `EnsClaim.tsx`'s
+   `submit()` had no error handling at all. `createOnChainSubnameClaimer`'s
+   `isAvailable()` returns a plain boolean with no error channel, so when
+   `apps/service` wasn't running (never started in this test), the
+   underlying `fetch` rejected, threw uncaught out of `submit()`, and left
+   the component sitting in `{kind: 'checking'}` forever — no further
+   `setPhase` call was ever going to run. Wrapped the whole function body
+   in try/catch, mapping any thrown error to the existing `failed` /
+   `error` outcome. Applied the same defensive wrap to `PayoutRecords.tsx`,
+   since `writeChefRecords()` also has an unguarded `normalize()`/
+   `namehash()` call before its own internal try/catch.
+2. **"Asking for the ENS name again."** Toggling Simulated ↔ Real
+   remounted `EnsClaim`/`PayoutRecords` from scratch (their `key` included
+   `claimMode`/`recordMode`), wiping anything already typed. A real Chef
+   would only ever be in one mode for their whole session, so this never
+   would have surfaced outside of demo-testing both modes back to back —
+   but it's still a real rough edge worth fixing for judges doing exactly
+   that. Dropped `claimMode`/`recordMode` from the key; `claimScenario`/
+   `recordScenario` + the run counters still force a fresh run for
+   explicit scenario-chip clicks.
+
+Also discussed, not built: Santino's instinct that Privy wallet creation
+should happen at signup — before choosing Cooker or Chef, one OTP not
+two — is correct and already the documented direction, not a new idea.
+`packages/privy`'s own scaffold plans exactly this via Privy's "custom
+auth" (an existing Sapore session token becomes the credential Privy
+trusts, so wallet creation rides on the same login rather than a separate
+one), and the "one Privy wallet per person, for both roles" decision is
+already logged (see the 25 Sept entry on wallet/ENS-namespace design).
+The two-OTP feel in this demo is specific to the standalone-Privy-login
+scope decision made for this isolated demo (no Cooker signup flow exists
+here to attach wallet creation to, and the real unification needs the
+private repo's auth system) — not a flaw to fix in this repo's narrow
+judged surface. Logged here as the confirmed direction for whenever that
+work starts, rather than built now.
+
+
+### Thu 25 Sept, later still — reconciled the signup/login design: wallet-login only
+
+Following up on the two-OTP discussion: Santino pushed further and asked
+the sharper question directly — for a crypto-only app, is a separate
+email+password+OTP signup step ever justified at all, versus just making
+Privy's wallet login *be* the signup, for both Cooker and Chef? Agreed:
+no, it isn't. Privy's email-OTP login already proves email control,
+creates identity, and creates the wallet in one step; a Sapore-specific
+credential system in front of that would prove the same thing twice for
+no benefit.
+
+Traced why the docs suggested otherwise: `docs/sapore-api-contract.md`'s
+auth section listed `POST /auth/login`/`/auth/signup`/`/auth/oauth`
+(password-based) as the primary path and `/auth/wallet-login` (SIWE,
+already Privy-shaped) as a secondary addition. That ordering reads like
+inheritance from Chefini's fiat/card-based fork ancestry rather than a
+deliberate crypto-only design — Chefini needs password auth for its
+Stripe-billed identity; Sapore doesn't.
+
+Updated `docs/sapore-api-contract.md`: `/auth/wallet-login` is now
+documented as the only auth path, handling signup and login identically
+(creates the `User` row on first sight of a wallet address, links to it
+otherwise) — no separate account-creation step, no password field. The
+password-based endpoints stay documented (they're still what's actually
+deployed) but marked legacy, same treatment as the already-deprecated
+crypto payment flow. Also flagged `PATCH /users/me/wallet` as likely
+redundant once this lands, since the "one wallet per person, both roles"
+decision means the login wallet and payout wallet are the same address by
+default.
+
+Also fixed `packages/privy/src/index.ts`'s scaffold comment, which
+planned the *reverse* direction (Privy verifying Sapore's tokens via
+"custom auth", presuming Sapore had its own login worth trusting) — kept
+as documented history, with the corrected direction (Sapore verifies
+Privy's SIWE signature, not the other way around) stated clearly above
+it.
+
+Scope note: the actual implementation is private-repo work
+(`packages/server/src/routes/auth.ts` there), out of what this repo is
+judged on. This update keeps the two repos' shared understanding
+accurate ahead of that work, rather than building it now.
+
+
+### Fri 26 Sept, early — CORS was the actual blocker on the first real claim attempt
+
+Santino got apps/service running and tried a real claim ("pepe") — got
+"Failed to fetch" instead of a hang (confirming yesterday's error-handling
+fix works), but the claim itself still couldn't reach the service.
+Browser CORS, not a real network failure: apps/web (Vite, auto-incremented
+to port 5174 since 5173 was taken) calling apps/service (port 4000)
+cross-origin, and Express had zero CORS configuration — the browser blocks
+the request before it reaches the service at all, which is also why the
+only detail `fetch` gives is the generic "Failed to fetch."
+
+Added the `cors` package, a `WEB_ORIGIN` config entry (comma-separated,
+defaults to localhost:5173-5175 to cover Vite's auto-increment behavior),
+and wired it into app.ts.
+
+While in there, added an honest comment on both `/ens/chef/claim` and
+`/ens/chef/records`: neither has any authentication yet. Anyone who can
+reach the service can register any available alias to any address for
+free, or write payout records for any name (the backend key holds
+ROOT_RESOURCE roles on the resolver). CORS was never protection against
+this — it only stops browser JS from other origins, not direct API calls.
+Real gating needs the wallet-login session design just reconciled in
+docs/sapore-api-contract.md (caller must be World ID verified and own
+`ownerAddress`) — real scope, not fixed here, flagged rather than hidden.
+
+
+### Fri 26 Sept, early — apps/service never actually loaded .env
+
+Right after the CORS fix, Santino got a step further and hit a real
+config error: "ENS backend is not configured on this deployment" —
+despite having added `ENS_BACKEND_PRIVATE_KEY` to `apps/service/.env`
+earlier. Root cause: `apps/service/src/index.ts` never loaded `.env` files
+at all. Unlike the deploy scripts (each of which explicitly does
+`import 'dotenv/config'`), `index.ts` just read `process.env` directly via
+`loadConfig()`, and plain Node doesn't auto-load `.env` — the file sat
+there, correctly filled in, never read by anything.
+
+Added `dotenv` as a dependency and `import 'dotenv/config'` to the top of
+`index.ts`, matching the pattern the deploy scripts already use. Verified
+directly in this sandbox with a real `.env` and a live `curl` against
+`/ens/chef/:label/availability`: the service now genuinely attempts a real
+`isAvailable()` call against Sepolia — it fails here only on this
+sandbox's own network egress allowlist (`ethereum-sepolia-rpc.publicnode.com`
+not permitted), which doesn't apply to a normal machine with real
+internet access. `pnpm build` and Biome both clean.
+
+### Fri 26 Sept — first real end-to-end ENS claim, on Santino's machine
+
+After pulling `018d657` and restarting `apps/service`, Santino claimed
+`jose.sapore.eth` in "Real (Sepolia)" mode through the actual browser UI —
+World ID step → Privy embedded wallet already connected → ENS claim called
+the live `apps/service` → `SaporeChefRegistrar.register()` on Sepolia →
+delegated write access, same as the scripted `05-register-chef.mjs` run,
+but this time driven entirely from the product UI with a Privy-created
+wallet address instead of a manually-funded deploy-script key. UI correctly
+landed on "CLAIMED — jose.sapore.eth is yours" and moved to the payout-address
+step. This is the first real proof the CORS + dotenv fixes actually unblock
+the intended flow outside the sandbox, not just via curl.
+
+Next to exercise for the first time: `createPrivyRecordWriter` — the Chef's
+own connected Privy wallet signing `writeChefRecords()` directly, via the
+"Set payout address" step now showing on screen.
+
+### Fri 26 Sept — WalletConnect's "Continue" button was mislabeled on the payout step
+
+Santino's browser closed mid-session; he reopened `localhost:5174`, redid
+World ID + claimed a fresh alias (`mario.sapore.eth`, simulated mode this
+time), then switched the Payout step to Real (Sepolia). Privy correctly
+restored his existing session with no re-login needed — but the resulting
+"Wallet ready / You're signed in" screen said "Continue to claim your name
+→", which is wrong on the payout step; claiming was already done.
+
+Root cause: `WalletConnect` is shared between the claim step and the
+payout step (`App.tsx`'s single `needsWallet` flag covers both), but its
+`Ready` screen hardcoded the claim-step's button text with no way for the
+caller to say which step actually asked for the wallet. Fixed by adding a
+`continueLabel` prop to `WalletConnect`/`Ready`, and having `App.tsx` pass
+"Continue to set payout address" when `recordNeedsWallet` is what
+triggered the gate, "Continue to claim your name" otherwise. `pnpm build`
+and Biome both clean.
+
+### Fri 26 Sept — payout address field never prefilled the connected wallet
+
+Right after the button-label fix, Santino asked a sharp UX question about
+the payout step: "isn't that address supposed to be what I just got
+through Privy? Why do I need to type it again?" Good catch — real
+inconsistency, not a misunderstanding. `EnsClaim` already resolves
+`ownerAddress` from `chefWallet.address` automatically in real mode (the
+Chef never types their own address for the claim), but `PayoutRecords`
+always started its input state at `''`, regardless of whether a wallet was
+already connected.
+
+Fixed by threading a `defaultAddress` prop from `App.tsx` (`chefWallet.address`
+in real mode, empty otherwise) into `PayoutRecords`'s initial `Phase.address`.
+Deliberately kept it editable rather than locking the field — paying out to
+a wallet other than the one you're logged in with is a legitimate case
+(e.g. a cold wallet for payouts, hot wallet for login), so prefill-but-
+overridable is the right default, not force-same-address. `pnpm build` and
+Biome both clean.
+
+### Fri 26 Sept — walked back "prefill but overridable"; locked it instead
+
+Santino pushed back on the previous entry's call: for Sapore Pay
+specifically, the embedded Privy wallet *is* the point — the ENS name is
+tied to it, the claim was signed by it, and letting someone retype a
+different payout address undermines exactly what the wallet-tied name is
+for. He's right, and it matches what `docs/sapore-api-contract.md` already
+settled on (login wallet = payout wallet by design) — the "editable
+override" reasoning in the previous entry didn't actually fit this app.
+
+Changed `PayoutRecords` so a connected wallet's address renders as a fixed
+`<p className="ec-mono">`, not an `<input>` — same treatment `EnsClaim`
+already gives the owner address (never shown as editable there either).
+Simulated mode (`defaultAddress === ''`, no real wallet to fix it to)
+keeps the free-text input, since it's only exercising demo scenarios, not
+a real address. `pnpm build` and Biome both clean.
+
+### Fri 26 Sept — ENS name, not the raw address, is the identity once claimed
+
+Santino proposed a broader identity rule: before a Chef claims a name, the
+raw Privy address is all there is, so it's fine to show it. Once
+`<alias>.sapore.eth` exists, though, that name — not the `0x...` address
+underneath it — should be what the product shows as "you" everywhere;
+the raw address becomes a small, copyable secondary detail, not the
+headline.
+
+`EnsClaim`'s own "Claimed" screen already worked this way (leads with
+`{fullName} is yours`, no address shown at all). Two other screens didn't:
+
+- `WalletConnect`'s "Ready" card, reused as the wallet gate ahead of the
+  Payout step, only ever showed the raw address ("You're signed in" +
+  `0x0b2a...a6a2`) — it had no way to know a name had already been
+  claimed by that point in the flow.
+- `PayoutRecords`'s locked address display (added earlier today) showed
+  the full untruncated `0x...` value in a bordered box — technically
+  correct but visually competing with the ENS name already in the H1
+  above it.
+
+Fixed both: `WalletConnect` takes an optional `chefName` prop — when
+`App.tsx` passes the already-claimed `fullName` (only possible once
+`step.kind === 'payout'`; there's nothing to pass before a name exists),
+the card reads "Signed in as `<name>`" with the address shrunk to a
+shortened, `title`-attributed secondary line, matching its existing
+`.wc-mono` (small, faint) styling. `PayoutRecords`'s locked value moved
+from `.ec-mono` (bordered box, full address) to `.ec-mono-inline`
+(shortened, same treatment `addr(60)` already gets inline in the copy
+above it) for the same reason. `pnpm build` and Biome both clean.
+
+### Fri 26 Sept — payout heading shouldn't ask a question it already answered
+
+Santino pointed out that once the address is locked, "Where should
+mario.sapore.eth get paid?" is the wrong register — nothing is being
+asked, since there's no choice left to make. Changed the H1 to a
+statement in the locked case ("You'll get paid to your mario.sapore.eth
+wallet"), dropped the now-redundant explanatory paragraph underneath it
+(the statement already says what that paragraph was there to clarify),
+and kept the original question form for Simulated mode, where typing an
+address is still a real choice being made. `pnpm build` and Biome both
+clean.
+
+### Fri 26 Sept — a "no resolver" error that wasn't a bug, and the real fix that followed
+
+Santino hit "maria.sapore.eth has no resolver yet" and it looked like a
+regression. It wasn't: `writeChefRecords()` does a genuine
+`publicClient.getEnsResolver({ name })` lookup against Sepolia, and it
+correctly found nothing, because the Claim step was still in its default
+Simulated mode while Payout had been switched to Real — `maria.sapore.eth`
+was never actually registered on-chain, so there was no real resolver to
+find. Confirmed by reading `writeChefRecords` in `packages/ens/src/chefRecords.ts`
+rather than guessing.
+
+That surfaced a real, separate complaint: the Real-mode journey had three
+clicks past picking an alias — a "Continue" on the wallet-ready screen, a
+"Set payout address →" on the claim-confirmation screen, and "Set payout
+address" on the payout screen itself — none of which represented an actual
+new decision once the wallet was already connected and its address already
+locked in. Fixed all three, but only for the Real-mode path, since
+Simulated mode's scenario chips (Taken / Unauthorized / No resolver / Tx
+error) are how ETHGlobal judges see every rejection state on demand and
+depend on Claim and Payout staying separate, clickable steps there:
+
+- `WalletConnect`'s `Ready` screen no longer waits for a click — once
+  Privy reports the wallet is actually ready, it auto-continues after a
+  ~700ms beat (long enough to read "Signed in as X", short enough not to
+  feel like a stall). Every other state (logged out, needs a wallet,
+  errored) still waits on an explicit action.
+- `EnsClaim` takes a new `autoAdvance` prop. When true, its "Claimed"
+  screen skips the "Set payout address →" click and moves on after ~900ms
+  on its own; when false (Simulated, or Real-only-for-claim), the manual
+  button and full explanatory copy stay exactly as before.
+- `PayoutRecords` takes a new `autoSubmit` prop. When true and the address
+  is locked, it fires the write itself on mount instead of waiting for a
+  button press — Privy's own signature prompt is the real checkpoint here,
+  not an extra click of ours in front of it. A failed auto-submit falls
+  back to the manual button rather than silently retrying an on-chain
+  write.
+- `App.tsx` computes `autoMerge = claimMode === 'real' && recordMode ===
+  'real'` and only sets `autoAdvance`/`autoSubmit` when both are real —
+  the actual "just do this for real" path, not a change to how Simulated
+  behaves.
+- Since the claim-confirmation screen (with its own tx hash) now gets
+  skipped in the merged path, threaded `claimTxHash` through `Step` ->
+  `PayoutRecords`, so the one screen left at the end shows both the name
+  claim's tx and the payout's tx, not just the second one.
+
+Net result in the fully-real path: type an alias, click "Check & claim"
+once, approve one Privy signature when it appears — everything else
+(wallet confirmation, the claim-to-payout handoff, firing the payout
+write) happens without another click. `pnpm build` and Biome both clean
+(Biome's own `useExhaustiveDependencies` suppression syntax needed
+`biome-ignore` comments directly above each `useEffect`, not the
+`eslint-disable-next-line` form used at first — different linter,
+different comment).
+
+### Fri 26 Sept — the wallet screen looked stuck after removing its button
+
+Santino tried the merged Real+Real flow and the wallet-ready screen just
+sat there with no alias input appearing — reasonably read as broken, since
+its only remaining control was a "Not you?" logout button with nothing
+suggesting anything was about to happen.
+
+Two real issues, not one:
+
+1. **A genuine bug in `useChefWallet`** (`apps/web/src/lib/privyWallet.ts`):
+   its effect depended on `wallets`, the raw array Privy's `useWallets()`
+   returns — which gets a new array reference most renders even when its
+   contents haven't changed. That re-ran the whole effect continuously,
+   re-fetching the embedded wallet's provider and rebuilding a brand new
+   `WalletClient`/`PublicClient` pair over and over, long after the wallet
+   was already ready. Not confirmed as the actual cause of the "stuck"
+   report (the auto-advance timer set on `Ready`'s first mount should
+   still fire regardless, since the effect's own deps are `[]`), but it's
+   wasteful and a real bug on inspection either way. Fixed by keying the
+   effect on `embedded?.address` — a stable primitive — instead of the
+   array itself.
+2. **No visual cue that anything was happening.** Removing the manual
+   "Continue" button (the whole point of the earlier auto-continue fix)
+   left a static card indistinguishable from an actually-broken one.
+   Added a plain "Continuing automatically…" line so the ~700ms wait
+   reads as a deliberate pause, not a hang.
+
+`pnpm build` and Biome both clean.
+
+### Fri 26 Sept — the wallet screen really was stuck: a StrictMode + ref-guard interaction
+
+Santino tested again after the previous entry's fixes and it was still
+stuck — now clearly showing "Continuing automatically…" and never
+continuing, well past 700ms. Not a timing issue after all.
+
+Root cause: `main.tsx` wraps the app in `<StrictMode>`, which in
+development deliberately double-invokes every effect once — mount, run
+its cleanup immediately, then mount again — specifically to surface bugs
+like this one. Both `WalletConnect`'s auto-continue and `EnsClaim`'s
+auto-advance used the same pattern: a `firedRef` ref flipped to `true`
+before scheduling `setTimeout`, with the effect's cleanup calling
+`clearTimeout`. Under StrictMode's double-invoke: the first invocation
+sets `firedRef.current = true` and schedules the timer; the immediate
+simulated-unmount cleanup cancels that timer; the second invocation checks
+`firedRef.current`, sees it already `true`, and returns without scheduling
+a replacement. No timer survives to ever fire — `onReady`/`onContinue`
+never gets called, and the screen sits there indefinitely. The ref was
+solving the wrong problem: it exists to stop *real* re-renders from
+re-arming the timer, but a mount-once effect (`deps: []`) doesn't need
+that protection at all — it needs each invocation to clean up only the
+timer it itself created.
+
+Fixed both by dropping the ref entirely in favor of a closure-scoped
+`cancelled` flag alongside the timer:
+
+```ts
+useEffect(() => {
+  let cancelled = false
+  const timer = setTimeout(() => {
+    if (!cancelled) onReady()
+  }, AUTO_CONTINUE_MS)
+  return () => {
+    cancelled = true
+    clearTimeout(timer)
+  }
+}, [])
+```
+
+Each invocation now owns and can only cancel its own timer, so StrictMode's
+extra mount cycle in dev correctly ends up with exactly one live timer that
+fires once — same as a real single mount would in production, where
+StrictMode's double-invoke doesn't happen at all. `PayoutRecords`'
+`autoSubmit` effect didn't have this bug (no `setTimeout`/cleanup pair to
+interact badly with the double-invoke — its ref guard alone is sufficient
+there), so left unchanged. `pnpm build` and Biome both clean.
+
+Also: the earlier screenshot showing "You're signed in" with no ENS name
+during this same test was correct, not a bug — that gate appears *before*
+any name is claimed (it's gating the Claim step itself), so there's
+nothing yet to show instead of the raw address. The "Signed in as
+`<name>`.sapore.eth" copy only applies once a name already exists, i.e.
+on the Payout step's wallet gate.
+
+### Fri 26 Sept — the auto-continue timer worked; the merge condition was unreachable
+
+Santino got past the wallet screen this time (the StrictMode fix worked)
+and successfully claimed `frech.sapore.eth` for real — but landed back on
+the old manual "Set payout address →" button instead of the merged
+one-click flow. Not a bug in the auto-advance code itself: `autoMerge`
+requires both `claimMode === 'real'` AND `recordMode === 'real'`, and
+those were two *independent* toggles, one shown on the Claim step, the
+other only shown on the Payout step. The Payout step doesn't render at all
+until *after* the claim has already finished — so on any first pass
+through the flow, there was no point at which both toggles could be
+"real" before the Claimed screen's `autoAdvance` value got locked in for
+that render. The merge condition was reachable only on a *second* pass in
+the same tab (mode state persisted across "Restart flow"), never on a
+fresh run — exactly what Santino hit.
+
+Fixed by collapsing `claimMode`/`recordMode` into one shared `mode` state
+in `App.tsx`, decided once via a single `ModeToggle` that now renders on
+both the Claim and Payout steps but reads/writes the same value. Setting
+Real on the Claim step is now sufficient — it carries through to Payout
+automatically, no second toggle to remember. `handleModeChange` bumps
+both `claimRun` and `recordRun` so either step gets a fresh mount if its
+toggle is touched, matching the existing scenario-chip remount pattern.
+Simulated mode's per-step scenario chips are untouched (`claimScenario`/
+`recordScenario` stay separate, as they should — those are what actually
+differ between the two demo scenarios, not the mode). `pnpm build` and
+Biome both clean.
+
+### Fri 26 Sept — the merge actually ran end to end, then hit a real cross-RPC race
+
+With the shared toggle fixed, Santino got all the way through: claimed
+`french.sapore.eth` for real, and the app auto-continued straight into
+the payout write — but that write reported "french.sapore.eth has no
+resolver yet," on a name that had *just* been registered for real, tx
+hash and all.
+
+Traced it to which RPC each side actually talks to. `apps/service`
+(the backend that registers the name) uses `SEPOLIA_RPC_URL`, defaulting
+to `https://ethereum-sepolia-rpc.publicnode.com`. The browser's own
+`publicClient` in `privyWallet.ts` — the one `writeChefRecords()` uses to
+look up the resolver before writing — was calling `http()` with no URL,
+which falls back to viem's own Sepolia default:
+`https://11155111.rpc.thirdweb.com`, confirmed with a one-line Node check
+against the installed `viem/chains` package rather than assumed. Two
+different providers can briefly disagree about the very latest block —
+public RPC endpoints load-balance across multiple backend nodes that
+don't all advance in lockstep — so a registration one provider just
+confirmed isn't guaranteed to be visible yet through a different one.
+The new auto-merge flow made this worse by removing the natural pause a
+human clicking two separate buttons used to provide.
+
+Two changes, addressing both the root cause and normal jitter:
+
+1. Added `VITE_SEPOLIA_RPC_URL` (`apps/web/.env.example`,
+   `vite-env.d.ts`) and pointed `privyWallet.ts`'s `publicClient` at it,
+   defaulting to the same `publicnode.com` URL `apps/service` already
+   uses. Same provider, same view of the chain — removes the cross-
+   provider race at its source rather than masking it.
+2. `writeChefRecords()` (`packages/ens/src/chefRecords.ts`) now retries
+   its resolver lookup up to 3 times, 1.2s apart, before concluding
+   `no_resolver` — cheap insurance against ordinary propagation jitter
+   even *within* one provider's own load-balanced nodes, not just across
+   providers.
+
+Also: `packages/ens` had never declared `@types/node`, so `setTimeout`
+(needed for the retry delay) had no ambient type in a package with no DOM
+lib either — same class of issue as `packages/core`'s earlier
+`TextEncoder`/`TextDecoder` fix, and fixed the same way: declare
+`@types/node` explicitly rather than relying on it arriving transitively.
+`pnpm -r build` and Biome both clean.
+
+### Fri 26 Sept — the real bug: viem's getEnsResolver doesn't know ENSv2 exists
+
+Santino confirmed he'd rebuilt `@sapore-pay/ens` and rerun the whole flow
+twice more (`french.sapore.eth`, `carlos.sapore.eth`), both freshly
+claimed for real, both still hitting "no resolver yet." 100% reproducible
+across different aliases is a different signature than an RPC-timing race
+— a race would be intermittent. That ruled out the previous entry's two
+fixes as the actual cause (they're still reasonable hygiene, just not
+what was failing here).
+
+Went back to first principles instead of guessing again: `writeChefRecords`
+was calling `publicClient.getEnsResolver({ name })` — viem's own built-in
+ENS action. Fetched the actual `ensdomains/contracts-v2` source from GitHub
+(not recalled from training) to check what that action is supposed to
+resolve through. `getEnsResolver` walks the **legacy** ENS Registry /
+Universal Resolver system — the one-contract-forever architecture ENSv1
+shipped with. ENSv2 (what this whole project is built on, per
+`SaporeChefRegistrar.sol`'s own `IPermissionedRegistry`/`IRegistry`
+imports) replaces that with per-parent registry contracts that the legacy
+Universal Resolver has no way to know about. So `getEnsResolver()` was
+never going to find anything here — not intermittently, not under any RPC
+provider, ever. It's not a race; it doesn't work for ENSv2 names at all.
+
+Fetched `IRegistry.sol` directly to find the real function:
+`getResolver(string calldata label) external view returns (address)`,
+callable directly on the specific registry contract that owns a name's
+parent (here, ENSv2's `UserRegistry` deployed for `sapore.eth`'s Chef
+subnames — `0x9a932e911c7FD7DfD54d1B11Ef4fE0c9aa46862d`, from
+`01-deploy-user-registry.mjs`). Rewrote `writeChefRecords()`
+(`packages/ens/src/chefRecords.ts`) to call that directly via
+`publicClient.readContract()` instead — passing the bare label (e.g.
+`"carlos"`), not the full dotted name, matching the real interface.
+Threaded a new `registryAddress` parameter through both callers:
+`apps/service`'s `ENS_REGISTRY` config (same default address) and
+`apps/web`'s new `VITE_ENS_REGISTRY` env var. Kept the retry loop from the
+previous entry — it's now retrying the *correct* call, so it still earns
+its keep against ordinary propagation jitter, just no longer papering
+over a lookup that could never have succeeded regardless.
+
+Honesty note: the previous entry's RPC-consistency and retry fixes were a
+plausible, reasoned hypothesis at the time, tested against real (if
+incomplete) evidence — but wrong. Recording that rather than quietly
+folding it into this entry, per this log's own standing rule about
+walked-back claims.
+
+`pnpm --filter @sapore-pay/ens build` and `pnpm -r build` both clean;
+Biome clean on every touched file. Not yet verified against the live
+chain from this sandbox — no network egress to any Sepolia RPC provider
+here (confirmed via the agent proxy's own status endpoint, same
+restriction noted earlier in this log), only to GitHub via WebFetch, which
+is how the interface itself got verified. Next real test is Santino's own
+machine.
+
+### Fri 26 Sept — the getResolver fix worked; hit a real gas estimation bug next
+
+Confirmed live on Santino's machine: the resolver lookup fix worked. For
+the first time all session, a real Privy signature prompt appeared showing
+an actual constructed transaction (`To: 0x0356...2858`, the real shared
+resolver) — proof `getResolver(label)` found it correctly this time. Privy
+did warn "Execution reverted for an unknown reason" in its own pre-flight
+simulation, but on Sepolia with a sub-cent fee, approving it anyway to get
+a real on-chain answer was the fastest way to find out what that meant —
+it came back "intrinsic gas too low," not the "unauthorized" outcome the
+revert warning might have suggested.
+
+"Intrinsic gas too low" is an RPC-level rejection before the resolver
+contract even runs — the declared gas limit was below the minimum needed
+just to include a transaction with this much calldata (a multicall
+bundling 2-4 `setAddr`/`setText` calls isn't small). `writeChefRecords()`'s
+`walletClient.writeContract()` call never set an explicit `gas` value,
+relying on automatic estimation — which works fine for `apps/service`'s
+backend-signed writes (a real viem `WalletClient` talking straight to an
+RPC node), but the Chef-signed path routes through Privy's own embedded-
+wallet provider (`custom(provider)` in `privyWallet.ts`), which does its
+own gas estimation for `eth_sendTransaction` and underestimated for a call
+this size.
+
+Fixed by passing an explicit `gas: 600_000n` on that write — comfortably
+above what a 2-4 call multicall actually costs, and most wallet providers
+use a caller-supplied gas value as-is rather than re-estimating once it's
+present. `pnpm --filter @sapore-pay/ens build` and Biome both clean.
+
+### Fri 26 Sept — funded wallet hit "insufficient funds," then a real UI bug on retry
+
+The "intrinsic gas too low" fix worked and Privy built a valid transaction
+— it just failed with "insufficient funds for gas * price + value: have 0
+want 751007651400000." Not a bug: the Privy embedded wallet is a brand new
+address that had never held any Sepolia ETH — every prior transaction
+(registration) was paid for by Sapore's backend key, and this is the first
+one the Chef's own wallet has to pay for itself. Santino funded it from
+another wallet and clicked the error screen's "Try again."
+
+That surfaced a real bug in `PayoutRecords.tsx`: the generic `ErrorState`'s
+retry handler reset `phase` to `{ kind: 'input', address: '' }` —
+hardcoded empty, not back to `defaultAddress`. Since `locked` is computed
+separately from `defaultAddress` (unaffected by the reset), the heading
+still read "You'll get paid to your sofia.sapore.eth wallet" while the
+locked mono display underneath rendered `shorten('')` — literally just
+"…" — and clicking "Set payout address" submitted that empty string,
+immediately hitting the address-format validation error. A real, visible
+inconsistency: locked copy paired with a blanked-out value.
+
+Fixed by resetting to `defaultAddress` instead of `''` on retry — the
+correct behavior once `locked` is true is "show the same wallet address
+again," not "ask the Chef to type an address a locked screen never let
+them type in the first place." `pnpm --filter @sapore-pay/web build` and
+Biome both clean.
+
+### Fri 26 Sept — first fully real end-to-end run, start to finish
+
+With the wallet funded and the retry-address bug fixed, Santino ran the
+whole flow again and it completed: World ID → claimed a name for real on
+ENSv2 Sepolia (backend-signed) → payout address written for real (Chef-
+signed via the connected Privy wallet, `Approve` in the wallet's own
+transaction-review UI, "Transaction complete!") → landed on "Payout
+address set," showing both tx hashes together (`Name claim: 0xc39c9b3b…`,
+`Payout: 0xaa0aed2c…`).
+
+This is the first time, across every attempt this session, that the
+complete Chef onboarding path — World ID, a real ENSv2 subname claim, and
+a real Chef-signed payout record write — has worked end to end through the
+actual product UI, with no manual script, no simulated step standing in
+for a real one. Everything fixed today (the `getResolver` protocol
+mismatch, the gas limit, the shared-toggle UX, the StrictMode timer bug,
+the retry-address bug) was in the path this run just exercised
+successfully.
+
+Nothing left to fix from this run — recorded as the milestone it is, not
+folded silently into the next bug report.

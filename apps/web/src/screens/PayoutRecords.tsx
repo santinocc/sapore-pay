@@ -10,7 +10,7 @@
  * account that holds no roles on the resolver it's targeting.
  */
 
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { RecordWriter } from '../lib/recordWriter'
 import './ens-claim.css'
 
@@ -27,11 +27,33 @@ const ADDRESS_PATTERN = /^0x[0-9a-fA-F]{40}$/
 export function PayoutRecords({
   writer,
   fullName,
+  defaultAddress = '',
+  claimTxHash,
+  autoSubmit = false,
 }: {
   writer: RecordWriter
   fullName: string
+  defaultAddress?: string
+  /** The claim's own tx hash, when the caller already has it — shown
+   * alongside the payout tx once written, so skipping the claim step's own
+   * confirmation screen (see EnsClaim's autoAdvance) doesn't lose the
+   * proof, just consolidates it onto the one screen that's left. */
+  claimTxHash?: string
+  /** Fire the write the moment the address is locked in, no button click.
+   * Only meaningful together with a locked (real) address — Simulated mode
+   * ignores this, since typing an address there is the point. */
+  autoSubmit?: boolean
 }) {
-  const [phase, setPhase] = useState<Phase>({ kind: 'input', address: '' })
+  // A connected wallet's address is fixed, not a suggestion: it's the same
+  // wallet that signed the claim, and payouts going anywhere else defeats
+  // the point of tying the ENS name to that wallet in the first place. Only
+  // Simulated mode (no defaultAddress — no real wallet to fix it to) leaves
+  // this typeable, for exercising the demo scenarios freely.
+  const locked = defaultAddress !== ''
+  const [phase, setPhase] = useState<Phase>({
+    kind: 'input',
+    address: defaultAddress,
+  })
 
   async function submit(address: string) {
     if (!ADDRESS_PATTERN.test(address)) {
@@ -43,30 +65,56 @@ export function PayoutRecords({
       return
     }
     setPhase({ kind: 'writing' })
-    const outcome = await writer.write(fullName, {
-      payoutAddress: address as `0x${string}`,
-    })
-    if (outcome.status === 'written') {
-      setPhase({ kind: 'written', txHash: outcome.txHash })
-    } else if (outcome.status === 'error') {
-      setPhase({ kind: 'error', message: outcome.message })
-    } else {
-      setPhase({ kind: outcome.status })
+    try {
+      const outcome = await writer.write(fullName, {
+        payoutAddress: address as `0x${string}`,
+      })
+      if (outcome.status === 'written') {
+        setPhase({ kind: 'written', txHash: outcome.txHash })
+      } else if (outcome.status === 'error') {
+        setPhase({ kind: 'error', message: outcome.message })
+      } else {
+        setPhase({ kind: outcome.status })
+      }
+    } catch (err) {
+      setPhase({ kind: 'error', message: (err as Error).message })
     }
   }
+
+  // Fires once, and only for the locked (real) address — a failed attempt
+  // falls back to the manual button below rather than retrying on its own,
+  // since silently resubmitting a failed on-chain write isn't something to
+  // do without the Chef noticing.
+  const autoSubmittedRef = useRef(false)
+  // biome-ignore lint/correctness/useExhaustiveDependencies: fires once per mount by design (autoSubmittedRef guards it); defaultAddress/phase.kind/submit are fixed for this mount's lifetime once locked is true.
+  useEffect(() => {
+    if (
+      !autoSubmit ||
+      !locked ||
+      phase.kind !== 'input' ||
+      autoSubmittedRef.current
+    ) {
+      return
+    }
+    autoSubmittedRef.current = true
+    submit(defaultAddress)
+  }, [autoSubmit, locked])
 
   if (phase.kind === 'input') {
     return (
       <InputForm
         fullName={fullName}
         address={phase.address}
+        locked={locked}
         error={phase.error}
         onSubmit={submit}
       />
     )
   }
   if (phase.kind === 'writing') return <Writing />
-  if (phase.kind === 'written') return <Written txHash={phase.txHash} />
+  if (phase.kind === 'written') {
+    return <Written txHash={phase.txHash} claimTxHash={claimTxHash} />
+  }
   if (phase.kind === 'no_resolver') {
     return <NoResolver fullName={fullName} />
   }
@@ -74,7 +122,7 @@ export function PayoutRecords({
   return (
     <ErrorState
       message={phase.message}
-      onRetry={() => setPhase({ kind: 'input', address: '' })}
+      onRetry={() => setPhase({ kind: 'input', address: defaultAddress })}
     />
   )
 }
@@ -92,11 +140,13 @@ function Card({
 function InputForm({
   fullName,
   address,
+  locked,
   error,
   onSubmit,
 }: {
   fullName: string
   address: string
+  locked: boolean
   error?: string
   onSubmit: (address: string) => void
 }) {
@@ -104,7 +154,11 @@ function InputForm({
   return (
     <Card>
       <p className="ec-eyebrow">Payout address</p>
-      <h1 className="ec-title">Where should {fullName} get paid?</h1>
+      <h1 className="ec-title">
+        {locked
+          ? `You'll get paid to your ${fullName} wallet`
+          : `Where should ${fullName} get paid?`}
+      </h1>
       <p className="ec-lede">
         Written to <span className="ec-mono-inline">addr(60)</span> and to the
         Tempo-specific record (ENSIP-11) in one transaction, so both resolve to
@@ -116,13 +170,19 @@ function InputForm({
           onSubmit(value)
         }}
       >
-        <input
-          className="ec-input ec-input--wide"
-          value={value}
-          onChange={(e) => setValue(e.target.value)}
-          placeholder="0x…"
-          aria-label="Payout address"
-        />
+        {locked ? (
+          <p className="ec-mono-inline" title={value}>
+            {shorten(value)}
+          </p>
+        ) : (
+          <input
+            className="ec-input ec-input--wide"
+            value={value}
+            onChange={(e) => setValue(e.target.value)}
+            placeholder="0x…"
+            aria-label="Payout address"
+          />
+        )}
         {error && <p className="ec-error">{error}</p>}
         <button type="submit" className="ec-btn ec-btn--primary">
           Set payout address
@@ -144,7 +204,13 @@ function Writing() {
   )
 }
 
-function Written({ txHash }: { txHash: string }) {
+function Written({
+  txHash,
+  claimTxHash,
+}: {
+  txHash: string
+  claimTxHash?: string
+}) {
   return (
     <Card tone="ok">
       <p className="ec-eyebrow ec-eyebrow--ok">Done</p>
@@ -153,11 +219,21 @@ function Written({ txHash }: { txHash: string }) {
         The next payout batch resolves your share through this record, not a
         stored database field.
       </p>
-      <p className="ec-mono">
-        {txHash.slice(0, 10)}…{txHash.slice(-6)}
-      </p>
+      {claimTxHash && (
+        <p className="ec-lede">
+          Name claim:{' '}
+          <span className="ec-mono-inline">{shortenTx(claimTxHash)}</span>
+          {' · '}
+          Payout: <span className="ec-mono-inline">{shortenTx(txHash)}</span>
+        </p>
+      )}
+      {!claimTxHash && <p className="ec-mono">{shortenTx(txHash)}</p>}
     </Card>
   )
+}
+
+function shortenTx(hash: string) {
+  return hash.length > 18 ? `${hash.slice(0, 10)}…${hash.slice(-6)}` : hash
 }
 
 function NoResolver({ fullName }: { fullName: string }) {
@@ -210,4 +286,8 @@ function ErrorState({
       </button>
     </Card>
   )
+}
+
+function shorten(address: string) {
+  return `${address.slice(0, 6)}…${address.slice(-4)}`
 }

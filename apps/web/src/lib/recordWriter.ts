@@ -4,19 +4,25 @@
  * designed screen, and the screen has to be buildable before the real thing
  * exists behind it.
  *
- * createOnChainRecordWriter calls apps/service, which signs the actual
- * writeChefRecords() call (from @sapore-pay/ens) with Sapore's own backend
- * key — not the browser, since apps/web has no embedded wallet yet (no
- * Privy integration). This is a real on-chain write today, just backend-
- * mediated rather than Chef-signed; see docs/engineering-log.md for why
- * that's a deliberate, demoable intermediate state rather than a stub.
- * Once Privy wires a real wallet client into the browser, this becomes a
- * direct call to writeChefRecords() with the Chef's own key — the resolver
- * side (03-authorize-chef.mjs's delegation) is already set up for that; only
- * this file's implementation changes, not the interface below.
+ * Two real implementations, not one, because both are genuinely useful:
+ *
+ *  - createOnChainRecordWriter calls apps/service, which signs
+ *    writeChefRecords() (from @sapore-pay/ens) with Sapore's own backend
+ *    key. Works for any Chef regardless of whether they have a wallet
+ *    connected — the demoable intermediate state docs/engineering-log.md
+ *    describes.
+ *  - createPrivyRecordWriter calls the exact same writeChefRecords()
+ *    directly with the Chef's own Privy wallet client — the actual end
+ *    state 03-authorize-chef.mjs's delegation exists for. Requires a
+ *    connected wallet (see privyWallet.ts / WalletConnect.tsx).
  */
 
-import type { ChefRecords, WriteRecordsOutcome } from './ensRecords'
+import type { PublicClient, WalletClient } from 'viem'
+import {
+  type ChefRecords,
+  type WriteRecordsOutcome,
+  writeChefRecords,
+} from './ensRecords'
 
 export interface RecordWriter {
   write(fullName: string, records: ChefRecords): Promise<WriteRecordsOutcome>
@@ -78,5 +84,23 @@ export function createOnChainRecordWriter(opts: {
       }
       return (await res.json()) as WriteRecordsOutcome
     },
+  }
+}
+
+/** Real implementation — the Chef's own Privy wallet signs directly. */
+export function createPrivyRecordWriter(
+  publicClient: PublicClient,
+  walletClient: WalletClient,
+  registryAddress: `0x${string}`,
+): RecordWriter {
+  return {
+    write: (fullName, records) =>
+      writeChefRecords(
+        publicClient,
+        walletClient,
+        fullName,
+        records,
+        registryAddress,
+      ),
   }
 }

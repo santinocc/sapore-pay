@@ -9,11 +9,18 @@
  * returns, so any state — including the rejection paths — is reachable on
  * purpose, not by breaking something live.
  *
- * The ENS claim and payout steps can each run in "Simulated" or
- * "Real (Sepolia)" mode. Real mode calls apps/service, which holds the
- * deployed SaporeChefRegistrar/resolver addresses and signs with Sapore's
- * backend key — see ensClaim.ts / recordWriter.ts for why that split exists.
- * World ID stays simulated-only: WORLD_APP_ID isn't configured yet.
+ * One shared "Simulated" / "Real (Sepolia)" toggle covers both the ENS
+ * claim and payout steps (not two independent ones — see `mode` below for
+ * why that split didn't work). Real mode gates on a connected Privy wallet
+ * (WalletConnect) first, since a real ownerAddress and a real signer for
+ * writeChefRecords() both come from it. Simulated mode never needs a
+ * wallet — its claimer/writer ignore ownerAddress entirely — so the wallet
+ * gate only appears when it's actually needed, not as a mandatory first
+ * step for everyone. Claiming itself still always goes through
+ * apps/service (SaporeChefRegistrar.register() only accepts calls from its
+ * deployed `backend` address); only payout records are Chef-signed
+ * directly once a wallet exists. World ID stays simulated-only:
+ * WORLD_APP_ID isn't configured yet.
  */
 
 import { useMemo, useState } from 'react'
@@ -26,26 +33,29 @@ import {
   createSimulatedVerifier,
   type SimulatedScenario,
 } from './lib/humanVerifier'
+import type { ChefWalletState } from './lib/privyWallet'
 import {
-  createOnChainRecordWriter,
+  createPrivyRecordWriter,
   createSimulatedRecordWriter,
   type SimulatedRecordScenario,
 } from './lib/recordWriter'
 import { ChefOnboarding } from './screens/ChefOnboarding'
 import { EnsClaim } from './screens/EnsClaim'
 import { PayoutRecords } from './screens/PayoutRecords'
+import { WalletConnect } from './screens/WalletConnect'
 import './theme.css'
 import './app.css'
 
 const SERVICE_URL = import.meta.env.VITE_SERVICE_URL ?? 'http://localhost:4000'
+const ENS_REGISTRY = (import.meta.env.VITE_ENS_REGISTRY ??
+  '0x9a932e911c7FD7DfD54d1B11Ef4fE0c9aa46862d') as `0x${string}`
 
-/** The demo's stand-in Chef wallet, until Privy gives each Chef their own. */
-const DEMO_CHEF_ADDRESS = '0x0d9f3D27e8F4EEBC80e445a59dAD5A9173d951ab'
+type ChefWallet = Extract<ChefWalletState, { status: 'ready' }>
 
 type Step =
   | { kind: 'onboarding' }
   | { kind: 'ens-claim' }
-  | { kind: 'payout'; fullName: string }
+  | { kind: 'payout'; fullName: string; claimTxHash?: string }
 
 type Mode = 'simulated' | 'real'
 
@@ -72,6 +82,7 @@ const RECORD_SCENARIOS: { id: SimulatedRecordScenario; label: string }[] = [
 
 export function App() {
   const [step, setStep] = useState<Step>({ kind: 'onboarding' })
+  const [chefWallet, setChefWallet] = useState<ChefWallet | null>(null)
 
   const [worldScenario, setWorldScenario] =
     useState<SimulatedScenario>('verified')
@@ -81,29 +92,57 @@ export function App() {
     [worldScenario],
   )
 
-  const [claimMode, setClaimMode] = useState<Mode>('simulated')
+  // One shared Simulated/Real toggle for both steps, not two independent
+  // ones. Two independent toggles meant Payout's toggle — the only place
+  // to turn Real on for payout — didn't even exist on screen until after
+  // the claim had already finished and rendered its (by-then-committed)
+  // manual "Set payout address" button: there was no way to have both
+  // "real" before that render happened on a first pass through the flow.
+  // One toggle, decided once (on the Claim step, where it's first shown),
+  // carries forward automatically.
+  const [mode, setMode] = useState<Mode>('simulated')
+
   const [claimScenario, setClaimScenario] =
     useState<SimulatedClaimScenario>('claimed')
   const [claimRun, setClaimRun] = useState(0)
   const claimer = useMemo(
     () =>
-      claimMode === 'real'
+      mode === 'real'
         ? createOnChainSubnameClaimer({ serviceUrl: SERVICE_URL })
         : createSimulatedSubnameClaimer(claimScenario),
-    [claimMode, claimScenario],
+    [mode, claimScenario],
   )
 
-  const [recordMode, setRecordMode] = useState<Mode>('simulated')
   const [recordScenario, setRecordScenario] =
     useState<SimulatedRecordScenario>('written')
   const [recordRun, setRecordRun] = useState(0)
-  const recordWriter = useMemo(
-    () =>
-      recordMode === 'real'
-        ? createOnChainRecordWriter({ serviceUrl: SERVICE_URL })
-        : createSimulatedRecordWriter(recordScenario),
-    [recordMode, recordScenario],
-  )
+  const recordWriter = useMemo(() => {
+    if (mode === 'real' && chefWallet) {
+      return createPrivyRecordWriter(
+        chefWallet.publicClient,
+        chefWallet.walletClient,
+        ENS_REGISTRY,
+      )
+    }
+    return createSimulatedRecordWriter(recordScenario)
+  }, [mode, recordScenario, chefWallet])
+
+  const claimNeedsWallet = step.kind === 'ens-claim' && mode === 'real'
+  const recordNeedsWallet = step.kind === 'payout' && mode === 'real'
+  const needsWallet = (claimNeedsWallet || recordNeedsWallet) && !chefWallet
+
+  // Real is the "just do this for real" path — there's no scenario chip to
+  // demo there, so nothing is lost by not stopping for a click between
+  // claiming and writing the payout record. Simulated stays click-driven,
+  // since that's what lets a chip pick "Taken", "Unauthorized", etc. on
+  // demand.
+  const autoMerge = mode === 'real'
+
+  function handleModeChange(m: Mode) {
+    setMode(m)
+    setClaimRun((n) => n + 1)
+    setRecordRun((n) => n + 1)
+  }
 
   return (
     <div className="shell">
@@ -135,19 +174,40 @@ export function App() {
             onClaimEns={() => setStep({ kind: 'ens-claim' })}
           />
         )}
-        {step.kind === 'ens-claim' && (
-          <EnsClaim
-            key={`claim-${claimMode}-${claimScenario}-${claimRun}`}
-            claimer={claimer}
-            ownerAddress={DEMO_CHEF_ADDRESS}
-            onClaimed={(fullName) => setStep({ kind: 'payout', fullName })}
+        {needsWallet && (
+          <WalletConnect
+            onReady={setChefWallet}
+            chefName={step.kind === 'payout' ? step.fullName : undefined}
           />
         )}
-        {step.kind === 'payout' && (
+        {step.kind === 'ens-claim' && !needsWallet && (
+          <EnsClaim
+            // Deliberately not keyed on mode: switching Simulated <-> Real
+            // shouldn't wipe an alias you already typed. claimScenario +
+            // claimRun still force a fresh run for explicit chip clicks.
+            key={`claim-${claimScenario}-${claimRun}`}
+            claimer={claimer}
+            ownerAddress={
+              mode === 'real' && chefWallet
+                ? chefWallet.address
+                : '0x0d9f3D27e8F4EEBC80e445a59dAD5A9173d951ab'
+            }
+            autoAdvance={autoMerge}
+            onClaimed={(fullName, txHash) =>
+              setStep({ kind: 'payout', fullName, claimTxHash: txHash })
+            }
+          />
+        )}
+        {step.kind === 'payout' && !needsWallet && (
           <PayoutRecords
-            key={`records-${recordMode}-${recordScenario}-${recordRun}`}
+            key={`records-${recordScenario}-${recordRun}`}
             writer={recordWriter}
             fullName={step.fullName}
+            claimTxHash={step.claimTxHash}
+            defaultAddress={
+              mode === 'real' && chefWallet ? chefWallet.address : ''
+            }
+            autoSubmit={autoMerge}
           />
         )}
       </main>
@@ -164,32 +224,17 @@ export function App() {
             {step.kind === 'onboarding' &&
               'World ID is simulated until the app id is configured.'}
             {step.kind === 'ens-claim' &&
-              (claimMode === 'real'
-                ? `Calls ${SERVICE_URL} — a real SaporeChefRegistrar.register() on ENSv2 Sepolia, signed by Sapore's backend.`
+              (mode === 'real'
+                ? `Calls ${SERVICE_URL} — a real SaporeChefRegistrar.register() on ENSv2 Sepolia, signed by Sapore's backend, for your connected wallet's address. Real mode also carries through to Payout automatically — no need to flip a second toggle there.`
                 : 'Simulated. Switch to Real (Sepolia) to hit the deployed SaporeChefRegistrar.')}
             {step.kind === 'payout' &&
-              (recordMode === 'real'
-                ? `Calls ${SERVICE_URL} — a real writeChefRecords() on ENSv2 Sepolia, signed by Sapore's backend (not the Chef's own wallet yet — no Privy integration).`
-                : 'Simulated. Switch to Real (Sepolia) to write real resolver records.')}
+              (mode === 'real'
+                ? 'A real writeChefRecords() on ENSv2 Sepolia, signed directly by your connected Privy wallet.'
+                : 'Simulated. Switch to Real (Sepolia) to write real resolver records with your own wallet.')}
           </span>
         </p>
-        {step.kind === 'ens-claim' && (
-          <ModeToggle
-            mode={claimMode}
-            onChange={(m) => {
-              setClaimMode(m)
-              setClaimRun((n) => n + 1)
-            }}
-          />
-        )}
-        {step.kind === 'payout' && (
-          <ModeToggle
-            mode={recordMode}
-            onChange={(m) => {
-              setRecordMode(m)
-              setRecordRun((n) => n + 1)
-            }}
-          />
+        {(step.kind === 'ens-claim' || step.kind === 'payout') && (
+          <ModeToggle mode={mode} onChange={handleModeChange} />
         )}
         <div className="demo__row">
           {step.kind === 'onboarding' &&
@@ -208,7 +253,7 @@ export function App() {
               </button>
             ))}
           {step.kind === 'ens-claim' &&
-            claimMode === 'simulated' &&
+            mode === 'simulated' &&
             CLAIM_SCENARIOS.map((s) => (
               <button
                 key={s.id}
@@ -224,7 +269,7 @@ export function App() {
               </button>
             ))}
           {step.kind === 'payout' &&
-            recordMode === 'simulated' &&
+            mode === 'simulated' &&
             RECORD_SCENARIOS.map((s) => (
               <button
                 key={s.id}
@@ -244,7 +289,10 @@ export function App() {
           <button
             type="button"
             className="demo__reset"
-            onClick={() => setStep({ kind: 'onboarding' })}
+            onClick={() => {
+              setStep({ kind: 'onboarding' })
+              setChefWallet(null)
+            }}
           >
             ↺ Restart flow
           </button>

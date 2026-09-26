@@ -1,9 +1,12 @@
+import cors from 'cors'
 import express, { type Express } from 'express'
 import { createEnsChefClient } from './chain/ensChef.js'
 import type { Config } from './config.js'
 
 export function createApp(config: Config): Express {
   const app = express()
+  const allowedOrigins = config.WEB_ORIGIN.split(',').map((o) => o.trim())
+  app.use(cors({ origin: allowedOrigins }))
   app.use(express.json({ limit: '256kb' }))
 
   const ensChef = createEnsChefClient(config)
@@ -23,6 +26,13 @@ export function createApp(config: Config): Express {
     }
   })
 
+  // No auth on this route yet — anyone who can reach this service can
+  // register any available alias to any address, for free, right now.
+  // Real gating (World ID verified + the caller owns `ownerAddress`, via
+  // the wallet-login session from docs/sapore-api-contract.md's Auth
+  // section) is real scope, not a one-line fix, and isn't built yet.
+  // Known, not hidden — CORS only stops browser JS from other origins,
+  // it was never protection against this.
   app.post('/ens/chef/claim', async (req, res) => {
     const { label, ownerAddress } = req.body ?? {}
     if (typeof label !== 'string' || typeof ownerAddress !== 'string') {
@@ -35,7 +45,10 @@ export function createApp(config: Config): Express {
 
   // Backs apps/web's createOnChainRecordWriter — see its doc comment for
   // why this is backend-signed (Sapore's own key) rather than the Chef's,
-  // until Privy wires a real wallet client into the browser.
+  // until Privy wires a real wallet client into the browser. Same missing-
+  // auth caveat as /ens/chef/claim above: the backend key holds
+  // ROOT_RESOURCE roles on the resolver, so it can write any name's
+  // records right now, not just the caller's own.
   app.post('/ens/chef/records', async (req, res) => {
     const { fullName, payoutAddress, tier, verified } = req.body ?? {}
     if (typeof fullName !== 'string' || typeof payoutAddress !== 'string') {

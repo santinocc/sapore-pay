@@ -13,7 +13,7 @@
  * is a real, valid, demoable state, not a bug to hide.
  */
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import {
   type ClaimOutcome,
   type SubnameClaimer,
@@ -21,6 +21,9 @@ import {
 } from '../lib/ensClaim'
 import type { WriteRecordsOutcome } from '../lib/ensRecords'
 import './ens-claim.css'
+
+// Long enough to read the confirmation and tx hash before moving on.
+const AUTO_ADVANCE_MS = 900
 
 type ClaimPhase =
   | { kind: 'intro'; alias: string; error?: string }
@@ -32,11 +35,18 @@ type ClaimPhase =
 export function EnsClaim({
   claimer,
   ownerAddress,
+  autoAdvance = false,
   onClaimed,
 }: {
   claimer: SubnameClaimer
   ownerAddress: `0x${string}`
-  onClaimed?: (fullName: string) => void
+  /** Skip the "Claimed — click to continue" pause and move to payout
+   * records on its own. Only meaningful when the caller is about to chain
+   * straight into an automatic payout write (both steps in Real mode) —
+   * there's no decision this pause was protecting there, just proof the
+   * claim happened, which the tx hash below still shows either way. */
+  autoAdvance?: boolean
+  onClaimed?: (fullName: string, txHash: string) => void
 }) {
   const [phase, setPhase] = useState<ClaimPhase>({ kind: 'intro', alias: '' })
 
@@ -47,24 +57,37 @@ export function EnsClaim({
       return
     }
     setPhase({ kind: 'checking', alias })
-    const available = await claimer.isAvailable(alias)
-    if (!available) {
+    // Wrapped end to end: isAvailable() has no error channel of its own
+    // (it returns a plain boolean), so a network failure — e.g.
+    // apps/service isn't running — would otherwise throw uncaught here and
+    // leave the UI stuck on "Checking availability" forever, with no
+    // setPhase call left to run.
+    try {
+      const available = await claimer.isAvailable(alias)
+      if (!available) {
+        setPhase({
+          kind: 'failed',
+          outcome: { status: 'taken', fullName: `${alias}.sapore.eth` },
+        })
+        return
+      }
+      setPhase({ kind: 'claiming', alias })
+      const outcome = await claimer.claim(alias, ownerAddress)
+      if (outcome.status === 'claimed') {
+        // Show the confirmation — don't advance yet. Auto-advancing here
+        // would skip past the one screen that proves the claim actually
+        // happened (the tx hash), same reasoning as the World onboarding
+        // screen's explicit "Claim your name" button instead of an
+        // auto-redirect.
+        setPhase({ kind: 'claimed', outcome })
+      } else {
+        setPhase({ kind: 'failed', outcome })
+      }
+    } catch (err) {
       setPhase({
         kind: 'failed',
-        outcome: { status: 'taken', fullName: `${alias}.sapore.eth` },
+        outcome: { status: 'error', message: (err as Error).message },
       })
-      return
-    }
-    setPhase({ kind: 'claiming', alias })
-    const outcome = await claimer.claim(alias, ownerAddress)
-    if (outcome.status === 'claimed') {
-      // Show the confirmation — don't advance yet. Auto-advancing here would
-      // skip past the one screen that proves the claim actually happened
-      // (the tx hash), same reasoning as the World onboarding screen's
-      // explicit "Claim your name" button instead of an auto-redirect.
-      setPhase({ kind: 'claimed', outcome })
-    } else {
-      setPhase({ kind: 'failed', outcome })
     }
   }
 
@@ -80,7 +103,10 @@ export function EnsClaim({
     return (
       <Claimed
         outcome={phase.outcome}
-        onContinue={() => onClaimed?.(phase.outcome.fullName)}
+        autoAdvance={autoAdvance}
+        onContinue={() =>
+          onClaimed?.(phase.outcome.fullName, phase.outcome.txHash)
+        }
       />
     )
   }
@@ -178,28 +204,51 @@ function Working({
 
 function Claimed({
   outcome,
+  autoAdvance,
   onContinue,
 }: {
   outcome: Extract<ClaimOutcome, { status: 'claimed' }>
+  autoAdvance: boolean
   onContinue?: () => void
 }) {
+  // A ref-guarded "fire once" breaks under StrictMode's dev-only double
+  // effect invocation (mount -> cleanup -> mount again): the ref flips to
+  // true before the first timer's cleanup cancels it, so the second
+  // invocation sees it already set and never schedules a replacement —
+  // onContinue never actually fires. A closure-local `cancelled` avoids
+  // that: each invocation only cancels its own timer.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: intentionally fires once per real mount when autoAdvance is true; onContinue is a fresh closure each render, not something this timer should re-arm against.
+  useEffect(() => {
+    if (!autoAdvance || !onContinue) return
+    let cancelled = false
+    const timer = setTimeout(() => {
+      if (!cancelled) onContinue()
+    }, AUTO_ADVANCE_MS)
+    return () => {
+      cancelled = true
+      clearTimeout(timer)
+    }
+  }, [autoAdvance])
+
   return (
     <Card tone="ok">
       <p className="ec-eyebrow ec-eyebrow--ok">Claimed</p>
       <h1 className="ec-title">{outcome.fullName} is yours</h1>
       <p className="ec-lede">
-        Next, set the address your payouts should land on. Until you do, the
-        name resolves but has no payout record — Cookers can still find you, but
-        the payout batch has nowhere to send your share yet.
+        {autoAdvance
+          ? 'Setting your payout address next, automatically — same wallet, no extra input needed.'
+          : 'Next, set the address your payouts should land on. Until you do, the name resolves but has no payout record — Cookers can still find you, but the payout batch has nowhere to send your share yet.'}
       </p>
       <p className="ec-mono">{shortenTx(outcome.txHash)}</p>
-      <button
-        type="button"
-        className="ec-btn ec-btn--primary"
-        onClick={onContinue}
-      >
-        Set payout address →
-      </button>
+      {!autoAdvance && (
+        <button
+          type="button"
+          className="ec-btn ec-btn--primary"
+          onClick={onContinue}
+        >
+          Set payout address →
+        </button>
+      )}
     </Card>
   )
 }

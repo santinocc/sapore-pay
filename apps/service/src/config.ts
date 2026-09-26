@@ -26,6 +26,24 @@ const schema = z.object({
   ENS_SHARED_RESOLVER: z
     .string()
     .default('0x0356d23bcfBe2Cb42508542c930C7A2cCa352858'),
+  // The ENSv2 UserRegistry holding sapore.eth's Chef subnames — distinct
+  // from ENS_CHEF_REGISTRAR (SaporeChefRegistrar, the wrapper contract that
+  // calls into this one). writeChefRecords() calls this registry's own
+  // getResolver(label) directly to find a name's resolver; see
+  // packages/ens/src/chefRecords.ts's doc comment for why (viem's built-in
+  // getEnsResolver() doesn't support ENSv2 registries at all).
+  ENS_REGISTRY: z
+    .string()
+    .default('0x9a932e911c7FD7DfD54d1B11Ef4fE0c9aa46862d'),
+
+  // Comma-separated origins allowed to call this service from a browser.
+  // Vite auto-increments past 5173 when the port's taken (5174, 5175, ...),
+  // hence the range rather than one fixed port.
+  WEB_ORIGIN: z
+    .string()
+    .default(
+      'http://localhost:5173,http://localhost:5174,http://localhost:5175',
+    ),
 })
 
 export type Config = z.infer<typeof schema>
