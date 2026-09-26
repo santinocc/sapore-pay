@@ -1591,3 +1591,36 @@ What Santino needs to do next: find the RP's signing key in the Developer
 Portal's World ID Configuration page (near where the RP ID is shown) and
 add it as `WORLD_RP_SIGNING_KEY` — asked him to screenshot what's there
 before adding anything, rather than guess a Portal UI flow a third time.
+
+### Fri 26 Sept — rp_context signing works; the next wall was Vite, not World
+
+Santino rotated the RP signer key in the Developer Portal ("Generate new
+key" — the non-destructive rotation, not "Switch to self-managed"), put it
+in `apps/service/.env` as `WORLD_RP_SIGNING_KEY`, and confirmed locally
+that the key derives to the same address the Portal shows as the new RP
+Signer (`0x9A9C...0055`) — checked with a one-liner that prints only the
+derived address, never the key. Retest: `GET /world/rp-context` → 200. The
+local-signing fix from the previous entry is confirmed by a live request.
+
+The widget then opened and immediately closed with `generic_error`.
+IDKit's React flow (`useIDKitFlow` in the installed dist) maps any
+unrecognised exception to `GenericError` and only logs the real one when
+`isDebug()` is true — which reads `window.IDKIT_DEBUG`. Setting that from
+the console (no code change) surfaced it:
+`Failed to initialize IDKit WASM: CompileError: WebAssembly.instantiate():
+expected magic word 00 61 73 6d, found 3c 21 64 6f`. `3c 21 64 6f` is
+`<!do` — the browser was handed `index.html` where it expected WASM.
+
+Cause: `@worldcoin/idkit-core` locates its WASM with `new
+URL("idkit_wasm_bg.wasm", import.meta.url)`. Vite's dev pre-bundler moves
+the JS into `node_modules/.vite/deps/` but not the `.wasm`, so that URL
+404s and Vite's SPA fallback answers with `index.html` (the Network tab's
+"idkit_wasm_bg.wasm 200, 1.1 kB" was the HTML page, in hindsight). Fix:
+`optimizeDeps.exclude: ['@worldcoin/idkit-core']` in `apps/web/vite.config.ts`
+— the pre-bundled `@worldcoin/idkit` wrapper then imports core from its real
+`node_modules` location, where the relative URL resolves. Verified against
+a real dev server in the sandbox before pushing, not just reasoned about:
+old path's first bytes `3c 21 64 6f` (Santino's exact error), new path's
+`00 61 73 6d`, `application/wasm`, 895 KB. `vite build` was never affected
+(it already emits `idkit_wasm_bg-*.wasm` as an asset), so this is
+dev-only — deployment doesn't need it, but it doesn't hurt either.
