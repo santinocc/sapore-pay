@@ -10,7 +10,7 @@
  * account that holds no roles on the resolver it's targeting.
  */
 
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { RecordWriter } from '../lib/recordWriter'
 import './ens-claim.css'
 
@@ -28,10 +28,21 @@ export function PayoutRecords({
   writer,
   fullName,
   defaultAddress = '',
+  claimTxHash,
+  autoSubmit = false,
 }: {
   writer: RecordWriter
   fullName: string
   defaultAddress?: string
+  /** The claim's own tx hash, when the caller already has it — shown
+   * alongside the payout tx once written, so skipping the claim step's own
+   * confirmation screen (see EnsClaim's autoAdvance) doesn't lose the
+   * proof, just consolidates it onto the one screen that's left. */
+  claimTxHash?: string
+  /** Fire the write the moment the address is locked in, no button click.
+   * Only meaningful together with a locked (real) address — Simulated mode
+   * ignores this, since typing an address there is the point. */
+  autoSubmit?: boolean
 }) {
   // A connected wallet's address is fixed, not a suggestion: it's the same
   // wallet that signed the claim, and payouts going anywhere else defeats
@@ -70,6 +81,25 @@ export function PayoutRecords({
     }
   }
 
+  // Fires once, and only for the locked (real) address — a failed attempt
+  // falls back to the manual button below rather than retrying on its own,
+  // since silently resubmitting a failed on-chain write isn't something to
+  // do without the Chef noticing.
+  const autoSubmittedRef = useRef(false)
+  // biome-ignore lint/correctness/useExhaustiveDependencies: fires once per mount by design (autoSubmittedRef guards it); defaultAddress/phase.kind/submit are fixed for this mount's lifetime once locked is true.
+  useEffect(() => {
+    if (
+      !autoSubmit ||
+      !locked ||
+      phase.kind !== 'input' ||
+      autoSubmittedRef.current
+    ) {
+      return
+    }
+    autoSubmittedRef.current = true
+    submit(defaultAddress)
+  }, [autoSubmit, locked])
+
   if (phase.kind === 'input') {
     return (
       <InputForm
@@ -82,7 +112,9 @@ export function PayoutRecords({
     )
   }
   if (phase.kind === 'writing') return <Writing />
-  if (phase.kind === 'written') return <Written txHash={phase.txHash} />
+  if (phase.kind === 'written') {
+    return <Written txHash={phase.txHash} claimTxHash={claimTxHash} />
+  }
   if (phase.kind === 'no_resolver') {
     return <NoResolver fullName={fullName} />
   }
@@ -172,7 +204,13 @@ function Writing() {
   )
 }
 
-function Written({ txHash }: { txHash: string }) {
+function Written({
+  txHash,
+  claimTxHash,
+}: {
+  txHash: string
+  claimTxHash?: string
+}) {
   return (
     <Card tone="ok">
       <p className="ec-eyebrow ec-eyebrow--ok">Done</p>
@@ -181,11 +219,21 @@ function Written({ txHash }: { txHash: string }) {
         The next payout batch resolves your share through this record, not a
         stored database field.
       </p>
-      <p className="ec-mono">
-        {txHash.slice(0, 10)}…{txHash.slice(-6)}
-      </p>
+      {claimTxHash && (
+        <p className="ec-lede">
+          Name claim:{' '}
+          <span className="ec-mono-inline">{shortenTx(claimTxHash)}</span>
+          {' · '}
+          Payout: <span className="ec-mono-inline">{shortenTx(txHash)}</span>
+        </p>
+      )}
+      {!claimTxHash && <p className="ec-mono">{shortenTx(txHash)}</p>}
     </Card>
   )
+}
+
+function shortenTx(hash: string) {
+  return hash.length > 18 ? `${hash.slice(0, 10)}…${hash.slice(-6)}` : hash
 }
 
 function NoResolver({ fullName }: { fullName: string }) {

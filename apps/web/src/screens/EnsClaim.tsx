@@ -13,7 +13,7 @@
  * is a real, valid, demoable state, not a bug to hide.
  */
 
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import {
   type ClaimOutcome,
   type SubnameClaimer,
@@ -21,6 +21,9 @@ import {
 } from '../lib/ensClaim'
 import type { WriteRecordsOutcome } from '../lib/ensRecords'
 import './ens-claim.css'
+
+// Long enough to read the confirmation and tx hash before moving on.
+const AUTO_ADVANCE_MS = 900
 
 type ClaimPhase =
   | { kind: 'intro'; alias: string; error?: string }
@@ -32,11 +35,18 @@ type ClaimPhase =
 export function EnsClaim({
   claimer,
   ownerAddress,
+  autoAdvance = false,
   onClaimed,
 }: {
   claimer: SubnameClaimer
   ownerAddress: `0x${string}`
-  onClaimed?: (fullName: string) => void
+  /** Skip the "Claimed — click to continue" pause and move to payout
+   * records on its own. Only meaningful when the caller is about to chain
+   * straight into an automatic payout write (both steps in Real mode) —
+   * there's no decision this pause was protecting there, just proof the
+   * claim happened, which the tx hash below still shows either way. */
+  autoAdvance?: boolean
+  onClaimed?: (fullName: string, txHash: string) => void
 }) {
   const [phase, setPhase] = useState<ClaimPhase>({ kind: 'intro', alias: '' })
 
@@ -93,7 +103,10 @@ export function EnsClaim({
     return (
       <Claimed
         outcome={phase.outcome}
-        onContinue={() => onClaimed?.(phase.outcome.fullName)}
+        autoAdvance={autoAdvance}
+        onContinue={() =>
+          onClaimed?.(phase.outcome.fullName, phase.outcome.txHash)
+        }
       />
     )
   }
@@ -191,28 +204,41 @@ function Working({
 
 function Claimed({
   outcome,
+  autoAdvance,
   onContinue,
 }: {
   outcome: Extract<ClaimOutcome, { status: 'claimed' }>
+  autoAdvance: boolean
   onContinue?: () => void
 }) {
+  const firedRef = useRef(false)
+  // biome-ignore lint/correctness/useExhaustiveDependencies: fires once per mount by design (firedRef guards it); re-arming on every onContinue identity change would defeat that guard.
+  useEffect(() => {
+    if (!autoAdvance || firedRef.current || !onContinue) return
+    firedRef.current = true
+    const timer = setTimeout(onContinue, AUTO_ADVANCE_MS)
+    return () => clearTimeout(timer)
+  }, [autoAdvance])
+
   return (
     <Card tone="ok">
       <p className="ec-eyebrow ec-eyebrow--ok">Claimed</p>
       <h1 className="ec-title">{outcome.fullName} is yours</h1>
       <p className="ec-lede">
-        Next, set the address your payouts should land on. Until you do, the
-        name resolves but has no payout record — Cookers can still find you, but
-        the payout batch has nowhere to send your share yet.
+        {autoAdvance
+          ? 'Setting your payout address next, automatically — same wallet, no extra input needed.'
+          : 'Next, set the address your payouts should land on. Until you do, the name resolves but has no payout record — Cookers can still find you, but the payout batch has nowhere to send your share yet.'}
       </p>
       <p className="ec-mono">{shortenTx(outcome.txHash)}</p>
-      <button
-        type="button"
-        className="ec-btn ec-btn--primary"
-        onClick={onContinue}
-      >
-        Set payout address →
-      </button>
+      {!autoAdvance && (
+        <button
+          type="button"
+          className="ec-btn ec-btn--primary"
+          onClick={onContinue}
+        >
+          Set payout address →
+        </button>
+      )}
     </Card>
   )
 }

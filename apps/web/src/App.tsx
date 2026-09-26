@@ -52,7 +52,7 @@ type ChefWallet = Extract<ChefWalletState, { status: 'ready' }>
 type Step =
   | { kind: 'onboarding' }
   | { kind: 'ens-claim' }
-  | { kind: 'payout'; fullName: string }
+  | { kind: 'payout'; fullName: string; claimTxHash?: string }
 
 type Mode = 'simulated' | 'real'
 
@@ -119,6 +119,13 @@ export function App() {
   const recordNeedsWallet = step.kind === 'payout' && recordMode === 'real'
   const needsWallet = (claimNeedsWallet || recordNeedsWallet) && !chefWallet
 
+  // Both real is the "just do this for real" path — there's no scenario
+  // chip to demo there, so nothing is lost by not stopping for a click
+  // between claiming and writing the payout record. Simulated stays
+  // click-driven either way, since that's what lets a chip pick "Taken",
+  // "Unauthorized", etc. on demand.
+  const autoMerge = claimMode === 'real' && recordMode === 'real'
+
   return (
     <div className="shell">
       <header className="shell__head">
@@ -152,11 +159,6 @@ export function App() {
         {needsWallet && (
           <WalletConnect
             onReady={setChefWallet}
-            continueLabel={
-              recordNeedsWallet
-                ? 'Continue to set payout address'
-                : 'Continue to claim your name'
-            }
             chefName={step.kind === 'payout' ? step.fullName : undefined}
           />
         )}
@@ -172,7 +174,10 @@ export function App() {
                 ? chefWallet.address
                 : '0x0d9f3D27e8F4EEBC80e445a59dAD5A9173d951ab'
             }
-            onClaimed={(fullName) => setStep({ kind: 'payout', fullName })}
+            autoAdvance={autoMerge}
+            onClaimed={(fullName, txHash) =>
+              setStep({ kind: 'payout', fullName, claimTxHash: txHash })
+            }
           />
         )}
         {step.kind === 'payout' && !needsWallet && (
@@ -180,9 +185,11 @@ export function App() {
             key={`records-${recordScenario}-${recordRun}`}
             writer={recordWriter}
             fullName={step.fullName}
+            claimTxHash={step.claimTxHash}
             defaultAddress={
               recordMode === 'real' && chefWallet ? chefWallet.address : ''
             }
+            autoSubmit={autoMerge}
           />
         )}
       </main>

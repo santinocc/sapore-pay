@@ -964,3 +964,57 @@ wallet"), dropped the now-redundant explanatory paragraph underneath it
 and kept the original question form for Simulated mode, where typing an
 address is still a real choice being made. `pnpm build` and Biome both
 clean.
+
+### Fri 26 Sept — a "no resolver" error that wasn't a bug, and the real fix that followed
+
+Santino hit "maria.sapore.eth has no resolver yet" and it looked like a
+regression. It wasn't: `writeChefRecords()` does a genuine
+`publicClient.getEnsResolver({ name })` lookup against Sepolia, and it
+correctly found nothing, because the Claim step was still in its default
+Simulated mode while Payout had been switched to Real — `maria.sapore.eth`
+was never actually registered on-chain, so there was no real resolver to
+find. Confirmed by reading `writeChefRecords` in `packages/ens/src/chefRecords.ts`
+rather than guessing.
+
+That surfaced a real, separate complaint: the Real-mode journey had three
+clicks past picking an alias — a "Continue" on the wallet-ready screen, a
+"Set payout address →" on the claim-confirmation screen, and "Set payout
+address" on the payout screen itself — none of which represented an actual
+new decision once the wallet was already connected and its address already
+locked in. Fixed all three, but only for the Real-mode path, since
+Simulated mode's scenario chips (Taken / Unauthorized / No resolver / Tx
+error) are how ETHGlobal judges see every rejection state on demand and
+depend on Claim and Payout staying separate, clickable steps there:
+
+- `WalletConnect`'s `Ready` screen no longer waits for a click — once
+  Privy reports the wallet is actually ready, it auto-continues after a
+  ~700ms beat (long enough to read "Signed in as X", short enough not to
+  feel like a stall). Every other state (logged out, needs a wallet,
+  errored) still waits on an explicit action.
+- `EnsClaim` takes a new `autoAdvance` prop. When true, its "Claimed"
+  screen skips the "Set payout address →" click and moves on after ~900ms
+  on its own; when false (Simulated, or Real-only-for-claim), the manual
+  button and full explanatory copy stay exactly as before.
+- `PayoutRecords` takes a new `autoSubmit` prop. When true and the address
+  is locked, it fires the write itself on mount instead of waiting for a
+  button press — Privy's own signature prompt is the real checkpoint here,
+  not an extra click of ours in front of it. A failed auto-submit falls
+  back to the manual button rather than silently retrying an on-chain
+  write.
+- `App.tsx` computes `autoMerge = claimMode === 'real' && recordMode ===
+  'real'` and only sets `autoAdvance`/`autoSubmit` when both are real —
+  the actual "just do this for real" path, not a change to how Simulated
+  behaves.
+- Since the claim-confirmation screen (with its own tx hash) now gets
+  skipped in the merged path, threaded `claimTxHash` through `Step` ->
+  `PayoutRecords`, so the one screen left at the end shows both the name
+  claim's tx and the payout's tx, not just the second one.
+
+Net result in the fully-real path: type an alias, click "Check & claim"
+once, approve one Privy signature when it appears — everything else
+(wallet confirmation, the claim-to-payout handoff, firing the payout
+write) happens without another click. `pnpm build` and Biome both clean
+(Biome's own `useExhaustiveDependencies` suppression syntax needed
+`biome-ignore` comments directly above each `useEffect`, not the
+`eslint-disable-next-line` form used at first — different linter,
+different comment).

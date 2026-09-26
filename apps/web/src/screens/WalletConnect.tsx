@@ -4,25 +4,31 @@
  * hardcoded demo one.
  *
  * Same "every outcome is a designed screen, transitions are explicit
- * buttons" pattern as ChefOnboarding.tsx and EnsClaim.tsx — including not
- * auto-advancing once the wallet is ready, for the same reason EnsClaim's
- * "Claimed" screen doesn't: this is the one screen that proves a real
- * wallet exists before anything gets signed with it.
+ * buttons" pattern as ChefOnboarding.tsx and EnsClaim.tsx for every state
+ * except one: once the wallet is actually ready, there's no decision left
+ * to make here — Privy already resolved who's signed in, and clicking
+ * "Continue" was only ever relaying that fact upward, not confirming
+ * anything new. So this state auto-advances (briefly showing the result
+ * first, not a silent skip) while every other state — logged out, needs a
+ * wallet, errored — still waits on an explicit action, same as before.
  */
 
 import { useCreateWallet, usePrivy } from '@privy-io/react-auth'
+import { useEffect, useRef } from 'react'
 import { type ChefWalletState, useChefWallet } from '../lib/privyWallet'
 import './wallet-connect.css'
 
 type ReadyChefWallet = Extract<ChefWalletState, { status: 'ready' }>
 
+// Long enough to read "Signed in as X" / the address, short enough that it
+// doesn't feel like a stall — this isn't a checkpoint, just a beat.
+const AUTO_CONTINUE_MS = 700
+
 export function WalletConnect({
   onReady,
-  continueLabel = 'Continue to claim your name',
   chefName,
 }: {
   onReady: (wallet: ReadyChefWallet) => void
-  continueLabel?: string
   /** The Chef's already-claimed `<alias>.sapore.eth`, when one exists. Once
    * a name is claimed it's the identity that matters — the raw address
    * becomes a secondary detail, not the headline. Omit before a name is
@@ -45,8 +51,7 @@ export function WalletConnect({
     <Ready
       address={state.address}
       chefName={chefName}
-      continueLabel={continueLabel}
-      onContinue={() => onReady(state)}
+      onReady={() => onReady(state)}
       onLogout={logout}
     />
   )
@@ -136,16 +141,25 @@ function NeedsWallet({
 function Ready({
   address,
   chefName,
-  continueLabel,
-  onContinue,
+  onReady,
   onLogout,
 }: {
   address: `0x${string}`
   chefName?: string
-  continueLabel: string
-  onContinue: () => void
+  onReady: () => void
   onLogout: () => void
 }) {
+  // Fires once per mount — a fresh login or a restored session both land
+  // here exactly once, and there's nothing to re-confirm on a re-render.
+  const firedRef = useRef(false)
+  // biome-ignore lint/correctness/useExhaustiveDependencies: fires once per mount by design (firedRef guards it), not on every onReady identity change.
+  useEffect(() => {
+    if (firedRef.current) return
+    firedRef.current = true
+    const timer = setTimeout(onReady, AUTO_CONTINUE_MS)
+    return () => clearTimeout(timer)
+  }, [])
+
   return (
     <Card tone="ok">
       <p className="wc-eyebrow wc-eyebrow--ok">Wallet ready</p>
@@ -160,15 +174,8 @@ function Ready({
       <p className="wc-mono" title={address}>
         {shorten(address)}
       </p>
-      <button
-        type="button"
-        className="wc-btn wc-btn--primary"
-        onClick={onContinue}
-      >
-        {continueLabel} →
-      </button>
       <button type="button" className="wc-btn wc-btn--ghost" onClick={onLogout}>
-        Use a different account
+        Not you? Use a different account
       </button>
     </Card>
   )
