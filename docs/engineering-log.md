@@ -1385,3 +1385,50 @@ have one — fixed with an exhaustive switch instead of narrowing on `!==`).
 Not yet tested against a real phone/World App — that's Santino's next step,
 same "real chain, sandbox has no egress to it" limitation as ENSv2 and
 Privy before it.
+
+### Fri 26 Sept — a real proof, a real rejection, and a real protocol-version mismatch
+
+Santino tested on his phone: the World App side completed genuinely
+("Congratulations! You have successfully shared your proofs anonymously"),
+confirming the widget's app_id/action/signal config is correctly wired to
+World's real infrastructure. IDKit's own modal then showed "Verification
+Declined." Browser console gave the exact reason:
+`{code: 'failed_by_host_app', message: 'Action not found.'}` —
+`failed_by_host_app` is IDKit's code for "the app's own `handleVerify`
+threw," and the message is `verifyCloudProof`'s response forwarded through
+unchanged — so this was a real answer from World's server, not a local bug.
+
+Read `verifyCloudProof`'s actual shipped source (not just its `.d.ts`) to
+confirm its hardcoded default: `POST
+https://developer.worldcoin.org/api/v2/verify/{app_id}` — same domain
+regardless of "sandbox" vs "production", ruling out an environment-URL
+mismatch as the cause. Search results (not independently verified against
+World's own docs — `docs.world.org` is blocked from this sandbox's egress,
+confirmed via the agent proxy's own status endpoint) describe the *current*
+endpoint as `/api/v4/verify/{rp_id}`, with `app_id` "still accepted for
+backward compatibility." That lines up exactly with what the Developer
+Portal showed: this app has a separate RP ID (`rp_45bf...`) alongside its
+App ID, i.e. it was provisioned under the newer RP-based system — plausible
+that the legacy v2 endpoint simply has no visibility into actions on an
+RP-structured app at all, independent of whether the action itself is
+correctly named or configured.
+
+Fixed by overriding only `verifyCloudProof`'s `endpoint` parameter to
+`/api/v4/verify/{app_id}` on the same `developer.worldcoin.org` host —
+deliberately the smallest possible change (one URL, not also rewriting the
+request body) so a live retest isolates exactly one variable. Also added
+`WORLD_VERIFY_ENDPOINT_BASE` as an env override, since the domain/path here
+is the one thing in this module that's an informed inference, not something
+verified against installed source or a reachable spec — if this exact guess
+turns out wrong, it's a env change, not a redeploy, to correct.
+
+Same `@types/node` gap as `packages/ens`/`packages/core` earlier today —
+`packages/world` uses `process.env` for the override but had never declared
+the dependency. Fixed the same way. `pnpm -r build` clean across all 9
+packages; Biome clean.
+
+Honesty note: the exact v4 request body/domain is inferred from search
+results describing World's own docs, not read directly from them or from
+installed source — flagged as such rather than presented as verified,
+per this log's standing practice. Next real test tells us if the inference
+holds.

@@ -7,6 +7,17 @@
  * `verifyCloudProof` (from `@worldcoin/idkit-core/backend`) rather than a
  * hand-rolled POST, so the request shape can't drift from the SDK's.
  *
+ * One deliberate override on top of the SDK default: `verifyCloudProof`
+ * hardcodes `/api/v2/verify/{app_id}`, which real-world testing showed
+ * returns `{code: 'failed_by_host_app', message: 'Action not found.'}` for
+ * an app created through the current (RP-based) Developer Portal — that
+ * legacy endpoint can't see actions on an RP-structured app at all. The
+ * current endpoint is `/api/v4/verify/{app_id | rp_id}` (app_id is
+ * documented as still accepted, for backward compatibility). Only the URL
+ * is overridden here, not the SDK's request body, so a wrong guess about
+ * the domain/path is the one thing to re-check if this still fails — see
+ * docs/engineering-log.md for what's actually confirmed vs. inferred.
+ *
  * Which SDK major this targets was a deliberate call, not an accident: the
  * current `@worldcoin/idkit` is 4.x, whose protocol requires a backend-signed
  * `rp_context` and a QR/polling flow. 2.4.2 is the last release of the
@@ -55,6 +66,12 @@ export type WorldVerificationResult =
 export const NOT_CONFIGURED =
   'World ID is not configured on this deployment.' as const
 
+// Overridable via env for when the real host/path turns out to differ from
+// this inference (see the module doc comment above) without another deploy.
+const VERIFY_ENDPOINT_BASE =
+  process.env.WORLD_VERIFY_ENDPOINT_BASE ??
+  'https://developer.worldcoin.org/api/v4/verify'
+
 /**
  * Asks World whether `proof` is a real, unspent proof of a unique human for
  * `action`, bound to `signal`.
@@ -79,6 +96,7 @@ export async function verifyWorldProof(opts: {
       opts.appId as `app_${string}`,
       opts.action,
       opts.signal,
+      `${VERIFY_ENDPOINT_BASE}/${opts.appId}`,
     )
   } catch (err) {
     return { status: 'error', message: (err as Error).message }
