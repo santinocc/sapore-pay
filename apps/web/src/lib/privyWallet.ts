@@ -57,8 +57,17 @@ export const PRIVY_APP_ID = import.meta.env.VITE_PRIVY_APP_ID ?? ''
 export function useChefWallet(): ChefWalletState {
   const { ready, authenticated } = usePrivy()
   const { wallets } = useWallets()
+  const embedded = getEmbeddedConnectedWallet(wallets)
+  // Privy's `wallets` array is a new reference most renders even when its
+  // contents haven't changed — depending on it directly re-ran this whole
+  // effect (and rebuilt a fresh WalletClient/PublicClient) continuously,
+  // well after the wallet was already ready. Depending on the embedded
+  // wallet's own address — a stable primitive — instead of the array fixes
+  // that without losing reactivity to an actual wallet change.
+  const embeddedAddress = embedded?.address ?? null
   const [state, setState] = useState<ChefWalletState>({ status: 'loading' })
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: intentionally keyed on embeddedAddress (stable) instead of wallets/embedded (new references most renders) — see the comment above embeddedAddress.
   useEffect(() => {
     if (!PRIVY_APP_ID) {
       setState({
@@ -75,7 +84,6 @@ export function useChefWallet(): ChefWalletState {
       setState({ status: 'logged_out' })
       return
     }
-    const embedded = getEmbeddedConnectedWallet(wallets)
     if (!embedded) {
       setState({ status: 'no_embedded_wallet' })
       return
@@ -109,7 +117,7 @@ export function useChefWallet(): ChefWalletState {
     return () => {
       cancelled = true
     }
-  }, [ready, authenticated, wallets])
+  }, [ready, authenticated, embeddedAddress])
 
   return state
 }

@@ -1018,3 +1018,32 @@ write) happens without another click. `pnpm build` and Biome both clean
 `biome-ignore` comments directly above each `useEffect`, not the
 `eslint-disable-next-line` form used at first — different linter,
 different comment).
+
+### Fri 26 Sept — the wallet screen looked stuck after removing its button
+
+Santino tried the merged Real+Real flow and the wallet-ready screen just
+sat there with no alias input appearing — reasonably read as broken, since
+its only remaining control was a "Not you?" logout button with nothing
+suggesting anything was about to happen.
+
+Two real issues, not one:
+
+1. **A genuine bug in `useChefWallet`** (`apps/web/src/lib/privyWallet.ts`):
+   its effect depended on `wallets`, the raw array Privy's `useWallets()`
+   returns — which gets a new array reference most renders even when its
+   contents haven't changed. That re-ran the whole effect continuously,
+   re-fetching the embedded wallet's provider and rebuilding a brand new
+   `WalletClient`/`PublicClient` pair over and over, long after the wallet
+   was already ready. Not confirmed as the actual cause of the "stuck"
+   report (the auto-advance timer set on `Ready`'s first mount should
+   still fire regardless, since the effect's own deps are `[]`), but it's
+   wasteful and a real bug on inspection either way. Fixed by keying the
+   effect on `embedded?.address` — a stable primitive — instead of the
+   array itself.
+2. **No visual cue that anything was happening.** Removing the manual
+   "Continue" button (the whole point of the earlier auto-continue fix)
+   left a static card indistinguishable from an actually-broken one.
+   Added a plain "Continuing automatically…" line so the ~700ms wait
+   reads as a deliberate pause, not a hang.
+
+`pnpm build` and Biome both clean.

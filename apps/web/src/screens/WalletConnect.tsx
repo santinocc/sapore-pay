@@ -174,6 +174,7 @@ function Ready({
       <p className="wc-mono" title={address}>
         {shorten(address)}
       </p>
+      <p className="wc-footnote">Continuing automatically…</p>
       <button type="button" className="wc-btn wc-btn--ghost" onClick={onLogout}>
         Not you? Use a different account
       </button>
