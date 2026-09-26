@@ -9,8 +9,9 @@
  * returns, so any state — including the rejection paths — is reachable on
  * purpose, not by breaking something live.
  *
- * The ENS claim and payout steps can each run in "Simulated" or
- * "Real (Sepolia)" mode. Real mode gates on a connected Privy wallet
+ * One shared "Simulated" / "Real (Sepolia)" toggle covers both the ENS
+ * claim and payout steps (not two independent ones — see `mode` below for
+ * why that split didn't work). Real mode gates on a connected Privy wallet
  * (WalletConnect) first, since a real ownerAddress and a real signer for
  * writeChefRecords() both come from it. Simulated mode never needs a
  * wallet — its claimer/writer ignore ownerAddress entirely — so the wallet
@@ -89,42 +90,56 @@ export function App() {
     [worldScenario],
   )
 
-  const [claimMode, setClaimMode] = useState<Mode>('simulated')
+  // One shared Simulated/Real toggle for both steps, not two independent
+  // ones. Two independent toggles meant Payout's toggle — the only place
+  // to turn Real on for payout — didn't even exist on screen until after
+  // the claim had already finished and rendered its (by-then-committed)
+  // manual "Set payout address" button: there was no way to have both
+  // "real" before that render happened on a first pass through the flow.
+  // One toggle, decided once (on the Claim step, where it's first shown),
+  // carries forward automatically.
+  const [mode, setMode] = useState<Mode>('simulated')
+
   const [claimScenario, setClaimScenario] =
     useState<SimulatedClaimScenario>('claimed')
   const [claimRun, setClaimRun] = useState(0)
   const claimer = useMemo(
     () =>
-      claimMode === 'real'
+      mode === 'real'
         ? createOnChainSubnameClaimer({ serviceUrl: SERVICE_URL })
         : createSimulatedSubnameClaimer(claimScenario),
-    [claimMode, claimScenario],
+    [mode, claimScenario],
   )
 
-  const [recordMode, setRecordMode] = useState<Mode>('simulated')
   const [recordScenario, setRecordScenario] =
     useState<SimulatedRecordScenario>('written')
   const [recordRun, setRecordRun] = useState(0)
   const recordWriter = useMemo(() => {
-    if (recordMode === 'real' && chefWallet) {
+    if (mode === 'real' && chefWallet) {
       return createPrivyRecordWriter(
         chefWallet.publicClient,
         chefWallet.walletClient,
       )
     }
     return createSimulatedRecordWriter(recordScenario)
-  }, [recordMode, recordScenario, chefWallet])
+  }, [mode, recordScenario, chefWallet])
 
-  const claimNeedsWallet = step.kind === 'ens-claim' && claimMode === 'real'
-  const recordNeedsWallet = step.kind === 'payout' && recordMode === 'real'
+  const claimNeedsWallet = step.kind === 'ens-claim' && mode === 'real'
+  const recordNeedsWallet = step.kind === 'payout' && mode === 'real'
   const needsWallet = (claimNeedsWallet || recordNeedsWallet) && !chefWallet
 
-  // Both real is the "just do this for real" path — there's no scenario
-  // chip to demo there, so nothing is lost by not stopping for a click
-  // between claiming and writing the payout record. Simulated stays
-  // click-driven either way, since that's what lets a chip pick "Taken",
-  // "Unauthorized", etc. on demand.
-  const autoMerge = claimMode === 'real' && recordMode === 'real'
+  // Real is the "just do this for real" path — there's no scenario chip to
+  // demo there, so nothing is lost by not stopping for a click between
+  // claiming and writing the payout record. Simulated stays click-driven,
+  // since that's what lets a chip pick "Taken", "Unauthorized", etc. on
+  // demand.
+  const autoMerge = mode === 'real'
+
+  function handleModeChange(m: Mode) {
+    setMode(m)
+    setClaimRun((n) => n + 1)
+    setRecordRun((n) => n + 1)
+  }
 
   return (
     <div className="shell">
@@ -164,13 +179,13 @@ export function App() {
         )}
         {step.kind === 'ens-claim' && !needsWallet && (
           <EnsClaim
-            // Deliberately not keyed on claimMode: switching Simulated <->
-            // Real shouldn't wipe an alias you already typed. claimScenario
-            // + claimRun still force a fresh run for explicit chip clicks.
+            // Deliberately not keyed on mode: switching Simulated <-> Real
+            // shouldn't wipe an alias you already typed. claimScenario +
+            // claimRun still force a fresh run for explicit chip clicks.
             key={`claim-${claimScenario}-${claimRun}`}
             claimer={claimer}
             ownerAddress={
-              claimMode === 'real' && chefWallet
+              mode === 'real' && chefWallet
                 ? chefWallet.address
                 : '0x0d9f3D27e8F4EEBC80e445a59dAD5A9173d951ab'
             }
@@ -187,7 +202,7 @@ export function App() {
             fullName={step.fullName}
             claimTxHash={step.claimTxHash}
             defaultAddress={
-              recordMode === 'real' && chefWallet ? chefWallet.address : ''
+              mode === 'real' && chefWallet ? chefWallet.address : ''
             }
             autoSubmit={autoMerge}
           />
@@ -206,32 +221,17 @@ export function App() {
             {step.kind === 'onboarding' &&
               'World ID is simulated until the app id is configured.'}
             {step.kind === 'ens-claim' &&
-              (claimMode === 'real'
-                ? `Calls ${SERVICE_URL} — a real SaporeChefRegistrar.register() on ENSv2 Sepolia, signed by Sapore's backend, for your connected wallet's address.`
+              (mode === 'real'
+                ? `Calls ${SERVICE_URL} — a real SaporeChefRegistrar.register() on ENSv2 Sepolia, signed by Sapore's backend, for your connected wallet's address. Real mode also carries through to Payout automatically — no need to flip a second toggle there.`
                 : 'Simulated. Switch to Real (Sepolia) to hit the deployed SaporeChefRegistrar.')}
             {step.kind === 'payout' &&
-              (recordMode === 'real'
+              (mode === 'real'
                 ? 'A real writeChefRecords() on ENSv2 Sepolia, signed directly by your connected Privy wallet.'
                 : 'Simulated. Switch to Real (Sepolia) to write real resolver records with your own wallet.')}
           </span>
         </p>
-        {step.kind === 'ens-claim' && (
-          <ModeToggle
-            mode={claimMode}
-            onChange={(m) => {
-              setClaimMode(m)
-              setClaimRun((n) => n + 1)
-            }}
-          />
-        )}
-        {step.kind === 'payout' && (
-          <ModeToggle
-            mode={recordMode}
-            onChange={(m) => {
-              setRecordMode(m)
-              setRecordRun((n) => n + 1)
-            }}
-          />
+        {(step.kind === 'ens-claim' || step.kind === 'payout') && (
+          <ModeToggle mode={mode} onChange={handleModeChange} />
         )}
         <div className="demo__row">
           {step.kind === 'onboarding' &&
@@ -250,7 +250,7 @@ export function App() {
               </button>
             ))}
           {step.kind === 'ens-claim' &&
-            claimMode === 'simulated' &&
+            mode === 'simulated' &&
             CLAIM_SCENARIOS.map((s) => (
               <button
                 key={s.id}
@@ -266,7 +266,7 @@ export function App() {
               </button>
             ))}
           {step.kind === 'payout' &&
-            recordMode === 'simulated' &&
+            mode === 'simulated' &&
             RECORD_SCENARIOS.map((s) => (
               <button
                 key={s.id}

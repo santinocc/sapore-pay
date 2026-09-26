@@ -1101,3 +1101,31 @@ any name is claimed (it's gating the Claim step itself), so there's
 nothing yet to show instead of the raw address. The "Signed in as
 `<name>`.sapore.eth" copy only applies once a name already exists, i.e.
 on the Payout step's wallet gate.
+
+### Fri 26 Sept — the auto-continue timer worked; the merge condition was unreachable
+
+Santino got past the wallet screen this time (the StrictMode fix worked)
+and successfully claimed `frech.sapore.eth` for real — but landed back on
+the old manual "Set payout address →" button instead of the merged
+one-click flow. Not a bug in the auto-advance code itself: `autoMerge`
+requires both `claimMode === 'real'` AND `recordMode === 'real'`, and
+those were two *independent* toggles, one shown on the Claim step, the
+other only shown on the Payout step. The Payout step doesn't render at all
+until *after* the claim has already finished — so on any first pass
+through the flow, there was no point at which both toggles could be
+"real" before the Claimed screen's `autoAdvance` value got locked in for
+that render. The merge condition was reachable only on a *second* pass in
+the same tab (mode state persisted across "Restart flow"), never on a
+fresh run — exactly what Santino hit.
+
+Fixed by collapsing `claimMode`/`recordMode` into one shared `mode` state
+in `App.tsx`, decided once via a single `ModeToggle` that now renders on
+both the Claim and Payout steps but reads/writes the same value. Setting
+Real on the Claim step is now sufficient — it carries through to Payout
+automatically, no second toggle to remember. `handleModeChange` bumps
+both `claimRun` and `recordRun` so either step gets a fresh mount if its
+toggle is touched, matching the existing scenario-chip remount pattern.
+Simulated mode's per-step scenario chips are untouched (`claimScenario`/
+`recordScenario` stay separate, as they should — those are what actually
+differ between the two demo scenarios, not the mode). `pnpm build` and
+Biome both clean.
