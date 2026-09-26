@@ -1683,3 +1683,9 @@ preparation for future payouts (ENSv2 subname claim + payout records),
 which is the part now fully proven live end to end, rejection path
 included. Next: deployment (Railway), demo video, submission writeup —
 only returning to Tempo if time remains after those.
+
+Retest on `fix/world-id-nullifier-replayed` confirmed: same reused-proof
+scenario now lands on "already a Chef" instead of the generic error card.
+The whole Chef onboarding story — real human verification, its rejection
+path, and ENSv2 name claim for future payouts — is now demo-ready and
+proven live end to end.
