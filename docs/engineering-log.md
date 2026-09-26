@@ -1643,3 +1643,49 @@ person for `chef-onboarding` should come back `max_verifications_reached`
 and land on the "already a Chef" screen — assuming the action's
 verification limit in the Portal is set to one, which hasn't been checked
 directly.
+
+### Sat 27 Sept — rejection path confirmed live, wrong error code guessed
+
+PR #6 merged. Santino tested the rejection path directly: verified once
+successfully, then reloaded and verified again with the same World App /
+same World ID. World correctly refused the reused proof — the World App
+itself showed "Verification failed — Your credentials don't meet Sapore's
+requirements" — and nothing got unlocked. So the core guarantee (one
+human, one Chef account) held under live testing. But the app showed the
+generic "Something went wrong" card instead of the "already a Chef" screen
+built for exactly this case, with `World ID error: nullifier_replayed`.
+
+The previous entries assumed World's rejection code for a reused proof
+would be `max_verifications_reached` (the per-action verification-limit
+error) — reasonable given the name, but never actually tested until now.
+The real code for this exact case (second proof, same nullifier, same
+action) is `nullifier_replayed` — a different, more specific error in
+IDKit's own confirmed error-code enum for "this exact proof was already
+used," distinct from `max_verifications_reached`'s "this action's
+per-verification limit is exhausted." Both are the same product outcome
+here (World's uniqueness guarantee did its job), so `verifyWorldProof()`
+now treats either code as `already_registered`, with `nullifier_replayed`
+documented as the one actually confirmed live and
+`max_verifications_reached` kept alongside as a fallback in case a
+different Portal limit configuration ever surfaces it instead.
+
+Small fix, one file (`packages/world/src/index.ts`), no protocol surprises
+this time — `pnpm --filter @sapore-pay/world build` and Biome both clean.
+Branched as `fix/world-id-nullifier-replayed` off the now-merged `main`,
+per the "never stack on merged history" rule.
+
+Priorities for the remaining ~16 hours to the ETHGlobal Tokyo 2026
+deadline (Sunday 9AM JST), set explicitly by Santino: Tempo/Bridge/the
+actual payment rail are parked for this hackathon — `packages/tempo`,
+`packages/bridge`, and `packages/sdk` stay stubs. The submission is scoped
+to Chef onboarding: real human verification (World ID) and wallet/ENS
+preparation for future payouts (ENSv2 subname claim + payout records),
+which is the part now fully proven live end to end, rejection path
+included. Next: deployment (Railway), demo video, submission writeup —
+only returning to Tempo if time remains after those.
+
+Retest on `fix/world-id-nullifier-replayed` confirmed: same reused-proof
+scenario now lands on "already a Chef" instead of the generic error card.
+The whole Chef onboarding story — real human verification, its rejection
+path, and ENSv2 name claim for future payouts — is now demo-ready and
+proven live end to end.
