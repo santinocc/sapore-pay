@@ -76,6 +76,16 @@ export type WriteRecordsOutcome =
  * at any time, and writing to a resolver a name no longer uses silently
  * updates records nobody reads."
  */
+// A registration another RPC node (or another provider entirely — see
+// privyWallet.ts's comment on VITE_SEPOLIA_RPC_URL) just confirmed isn't
+// guaranteed to be visible on the very next read against this client's own
+// node: public RPC endpoints load-balance across multiple backend nodes
+// that don't all advance in perfect lockstep. A few short retries absorb
+// that normal propagation jitter instead of reporting a real name as
+// falsely unclaimed the instant a claim-then-write flow runs back to back.
+const RESOLVER_LOOKUP_RETRIES = 3
+const RESOLVER_LOOKUP_RETRY_DELAY_MS = 1200
+
 export async function writeChefRecords(
   publicClient: PublicClient,
   walletClient: WalletClient,
@@ -87,7 +97,7 @@ export async function writeChefRecords(
 
   let resolver: Address | null
   try {
-    resolver = (await publicClient.getEnsResolver({ name })) as Address | null
+    resolver = await lookupResolverWithRetries(publicClient, name)
   } catch (err) {
     return { status: 'error', message: (err as Error).message }
   }
@@ -145,4 +155,24 @@ function encodeResolverCall(
   args: readonly unknown[],
 ): `0x${string}` {
   return encodeFunctionData({ abi: resolverAbi, functionName, args } as never)
+}
+
+async function lookupResolverWithRetries(
+  publicClient: PublicClient,
+  name: string,
+): Promise<Address | null> {
+  for (let attempt = 1; attempt <= RESOLVER_LOOKUP_RETRIES; attempt++) {
+    const resolver = (await publicClient.getEnsResolver({
+      name,
+    })) as Address | null
+    if (resolver && resolver !== '0x0000000000000000000000000000000000000000') {
+      return resolver
+    }
+    if (attempt < RESOLVER_LOOKUP_RETRIES) {
+      await new Promise((resolve) =>
+        setTimeout(resolve, RESOLVER_LOOKUP_RETRY_DELAY_MS),
+      )
+    }
+  }
+  return null
 }

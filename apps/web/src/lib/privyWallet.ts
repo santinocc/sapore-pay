@@ -54,6 +54,17 @@ export type ChefWalletState =
  */
 export const PRIVY_APP_ID = import.meta.env.VITE_PRIVY_APP_ID ?? ''
 
+// Same provider apps/service uses (see its SEPOLIA_RPC_URL default) —
+// viem's own Sepolia default points at a different provider (thirdweb's),
+// and two different providers can briefly disagree about the latest block.
+// A registration the backend just confirmed via its own RPC isn't
+// guaranteed to be visible yet through a different one; reading through
+// the same provider that wrote it removes that gap rather than papering
+// over it with a delay or a retry.
+const SEPOLIA_RPC_URL =
+  import.meta.env.VITE_SEPOLIA_RPC_URL ??
+  'https://ethereum-sepolia-rpc.publicnode.com'
+
 export function useChefWallet(): ChefWalletState {
   const { ready, authenticated } = usePrivy()
   const { wallets } = useWallets()
@@ -105,7 +116,7 @@ export function useChefWallet(): ChefWalletState {
           }),
           publicClient: createPublicClient({
             chain: sepolia,
-            transport: http(),
+            transport: http(SEPOLIA_RPC_URL),
           }),
         })
       })

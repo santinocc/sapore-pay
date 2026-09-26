@@ -1129,3 +1129,46 @@ Simulated mode's per-step scenario chips are untouched (`claimScenario`/
 `recordScenario` stay separate, as they should — those are what actually
 differ between the two demo scenarios, not the mode). `pnpm build` and
 Biome both clean.
+
+### Fri 26 Sept — the merge actually ran end to end, then hit a real cross-RPC race
+
+With the shared toggle fixed, Santino got all the way through: claimed
+`french.sapore.eth` for real, and the app auto-continued straight into
+the payout write — but that write reported "french.sapore.eth has no
+resolver yet," on a name that had *just* been registered for real, tx
+hash and all.
+
+Traced it to which RPC each side actually talks to. `apps/service`
+(the backend that registers the name) uses `SEPOLIA_RPC_URL`, defaulting
+to `https://ethereum-sepolia-rpc.publicnode.com`. The browser's own
+`publicClient` in `privyWallet.ts` — the one `writeChefRecords()` uses to
+look up the resolver before writing — was calling `http()` with no URL,
+which falls back to viem's own Sepolia default:
+`https://11155111.rpc.thirdweb.com`, confirmed with a one-line Node check
+against the installed `viem/chains` package rather than assumed. Two
+different providers can briefly disagree about the very latest block —
+public RPC endpoints load-balance across multiple backend nodes that
+don't all advance in lockstep — so a registration one provider just
+confirmed isn't guaranteed to be visible yet through a different one.
+The new auto-merge flow made this worse by removing the natural pause a
+human clicking two separate buttons used to provide.
+
+Two changes, addressing both the root cause and normal jitter:
+
+1. Added `VITE_SEPOLIA_RPC_URL` (`apps/web/.env.example`,
+   `vite-env.d.ts`) and pointed `privyWallet.ts`'s `publicClient` at it,
+   defaulting to the same `publicnode.com` URL `apps/service` already
+   uses. Same provider, same view of the chain — removes the cross-
+   provider race at its source rather than masking it.
+2. `writeChefRecords()` (`packages/ens/src/chefRecords.ts`) now retries
+   its resolver lookup up to 3 times, 1.2s apart, before concluding
+   `no_resolver` — cheap insurance against ordinary propagation jitter
+   even *within* one provider's own load-balanced nodes, not just across
+   providers.
+
+Also: `packages/ens` had never declared `@types/node`, so `setTimeout`
+(needed for the retry delay) had no ambient type in a package with no DOM
+lib either — same class of issue as `packages/core`'s earlier
+`TextEncoder`/`TextDecoder` fix, and fixed the same way: declare
+`@types/node` explicitly rather than relying on it arriving transitively.
+`pnpm -r build` and Biome both clean.
