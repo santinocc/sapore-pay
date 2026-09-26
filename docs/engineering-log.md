@@ -1280,3 +1280,25 @@ correct behavior once `locked` is true is "show the same wallet address
 again," not "ask the Chef to type an address a locked screen never let
 them type in the first place." `pnpm --filter @sapore-pay/web build` and
 Biome both clean.
+
+### Fri 26 Sept — first fully real end-to-end run, start to finish
+
+With the wallet funded and the retry-address bug fixed, Santino ran the
+whole flow again and it completed: World ID → claimed a name for real on
+ENSv2 Sepolia (backend-signed) → payout address written for real (Chef-
+signed via the connected Privy wallet, `Approve` in the wallet's own
+transaction-review UI, "Transaction complete!") → landed on "Payout
+address set," showing both tx hashes together (`Name claim: 0xc39c9b3b…`,
+`Payout: 0xaa0aed2c…`).
+
+This is the first time, across every attempt this session, that the
+complete Chef onboarding path — World ID, a real ENSv2 subname claim, and
+a real Chef-signed payout record write — has worked end to end through the
+actual product UI, with no manual script, no simulated step standing in
+for a real one. Everything fixed today (the `getResolver` protocol
+mismatch, the gas limit, the shared-toggle UX, the StrictMode timer bug,
+the retry-address bug) was in the path this run just exercised
+successfully.
+
+Nothing left to fix from this run — recorded as the milestone it is, not
+folded silently into the next bug report.
