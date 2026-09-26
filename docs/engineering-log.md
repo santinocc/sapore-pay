@@ -885,3 +885,22 @@ caller to say which step actually asked for the wallet. Fixed by adding a
 "Continue to set payout address" when `recordNeedsWallet` is what
 triggered the gate, "Continue to claim your name" otherwise. `pnpm build`
 and Biome both clean.
+
+### Fri 26 Sept — payout address field never prefilled the connected wallet
+
+Right after the button-label fix, Santino asked a sharp UX question about
+the payout step: "isn't that address supposed to be what I just got
+through Privy? Why do I need to type it again?" Good catch — real
+inconsistency, not a misunderstanding. `EnsClaim` already resolves
+`ownerAddress` from `chefWallet.address` automatically in real mode (the
+Chef never types their own address for the claim), but `PayoutRecords`
+always started its input state at `''`, regardless of whether a wallet was
+already connected.
+
+Fixed by threading a `defaultAddress` prop from `App.tsx` (`chefWallet.address`
+in real mode, empty otherwise) into `PayoutRecords`'s initial `Phase.address`.
+Deliberately kept it editable rather than locking the field — paying out to
+a wallet other than the one you're logged in with is a legitimate case
+(e.g. a cold wallet for payouts, hot wallet for login), so prefill-but-
+overridable is the right default, not force-same-address. `pnpm build` and
+Biome both clean.

@@ -179,6 +179,9 @@ export function App() {
             key={`records-${recordScenario}-${recordRun}`}
             writer={recordWriter}
             fullName={step.fullName}
+            defaultAddress={
+              recordMode === 'real' && chefWallet ? chefWallet.address : ''
+            }
           />
         )}
       </main>

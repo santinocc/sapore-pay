@@ -27,11 +27,16 @@ const ADDRESS_PATTERN = /^0x[0-9a-fA-F]{40}$/
 export function PayoutRecords({
   writer,
   fullName,
+  defaultAddress = '',
 }: {
   writer: RecordWriter
   fullName: string
+  defaultAddress?: string
 }) {
-  const [phase, setPhase] = useState<Phase>({ kind: 'input', address: '' })
+  const [phase, setPhase] = useState<Phase>({
+    kind: 'input',
+    address: defaultAddress,
+  })
 
   async function submit(address: string) {
     if (!ADDRESS_PATTERN.test(address)) {
