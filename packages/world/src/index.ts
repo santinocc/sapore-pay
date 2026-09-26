@@ -26,13 +26,15 @@
  *    entirely) to "responses array is required" (right endpoint, proof body
  *    still v2-shaped at the time) — the URL below is real, not inferred.
  *
- * Uniqueness ("one human, one Chef account") is enforced by World itself,
- * via the per-action verification limit configured on `chef-onboarding` in
- * the Developer Portal — a second proof from the same person for the same
- * action comes back as `max_verifications_reached`. That is why this module
- * stores nothing: there is no local nullifier table to get out of sync, and
- * the nullifier it returns is for the caller to bind to an account, not for
- * us to keep here.
+ * Uniqueness ("one human, one Chef account") is enforced by World itself:
+ * a second proof from the same person for the same action reuses that
+ * person's per-action nullifier, and World rejects it as `nullifier_replayed`
+ * (confirmed by live testing — verifying twice with the same World ID on
+ * `chef-onboarding`; `max_verifications_reached` is kept as an alias for the
+ * same product outcome, in case a higher per-action limit ever surfaces it
+ * instead). That is why this module stores nothing: there is no local
+ * nullifier table to get out of sync, and the nullifier it returns is for
+ * the caller to bind to an account, not for us to keep here.
  */
 
 import { signRequest } from '@worldcoin/idkit-server'
@@ -152,10 +154,17 @@ export async function verifyWorldProof(opts: {
   if (res.ok) {
     return { status: 'verified', nullifierHash: extractNullifier(opts.proof) }
   }
-  // World's own name for "this person already did this action". Surfaced as
-  // its own outcome because the product has a real screen for it, not a
-  // generic failure toast.
-  if (body.code === 'max_verifications_reached') {
+  // World's own names for "this person already did this action" — confirmed
+  // by live testing to be `nullifier_replayed` in practice (a second proof
+  // from the same person reuses the same per-action nullifier), with
+  // `max_verifications_reached` kept alongside it since it's the same
+  // product outcome under a different name for a per-action limit set above
+  // one. Surfaced as its own outcome because the product has a real screen
+  // for it, not a generic failure toast.
+  if (
+    body.code === 'nullifier_replayed' ||
+    body.code === 'max_verifications_reached'
+  ) {
     return { status: 'already_registered' }
   }
   return {
