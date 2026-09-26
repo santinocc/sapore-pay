@@ -13,8 +13,7 @@
     "test": "vitest run --passWithNoTests"
   },
   "dependencies": {
-    "@sapore-pay/core": "workspace:*",
-    "@worldcoin/idkit-core": "2.1.0"
+    "@sapore-pay/core": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

@@ -14,9 +14,9 @@
  *     breaking something.
  *
  * The trust decision is never made here. This returns what the *server* said
- * after it called `POST /api/v2/verify/{app_id}`; the browser never decides
- * whether a human is verified, and a nullifier that reaches this code is
- * already spent server-side.
+ * after it forwarded the proof to World's verify endpoint (see
+ * packages/world); the browser never decides whether a human is verified,
+ * and a nullifier that reaches this code is already spent server-side.
  */
 
 /** The action id registered in the World Developer Portal. One trust moment. */

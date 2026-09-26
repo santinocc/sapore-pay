@@ -3,50 +3,115 @@
  *
  * The browser never decides whether someone is a unique human. IDKit runs in
  * apps/web and hands back a proof; this module — called from apps/service —
- * is what asks World whether that proof is real, using IDKit's own
- * `verifyCloudProof` (from `@worldcoin/idkit-core/backend`) rather than a
- * hand-rolled POST, so the request shape can't drift from the SDK's.
+ * is what asks World whether that proof is real.
  *
- * One deliberate override on top of the SDK default: `verifyCloudProof`
- * hardcodes `/api/v2/verify/{app_id}`, which real-world testing showed
- * returns `{code: 'failed_by_host_app', message: 'Action not found.'}` for
- * an app created through the current (RP-based) Developer Portal — that
- * legacy endpoint can't see actions on an RP-structured app at all. The
- * current endpoint is `/api/v4/verify/{app_id | rp_id}` (app_id is
- * documented as still accepted, for backward compatibility). Only the URL
- * is overridden here, not the SDK's request body, so a wrong guess about
- * the domain/path is the one thing to re-check if this still fails — see
- * docs/engineering-log.md for what's actually confirmed vs. inferred.
+ * Two calls, two directions, both against World's own infrastructure:
  *
- * Which SDK major this targets was a deliberate call, not an accident: the
- * current `@worldcoin/idkit` is 4.x, whose protocol requires a backend-signed
- * `rp_context` and a QR/polling flow. 2.4.2 is the last release of the
- * classic app_id/action/signal model, and 4.x still ships `orbLegacy` /
- * `deviceLegacy` presets described as "for compatibility with older IDKit
- * versions" — so v3 proofs, which is what this path produces, remain
- * first-class in the protocol. See docs/engineering-log.md for the full
- * reasoning and the time-risk tradeoff behind it.
+ *  - `fetchSignedRpContext()` — BEFORE a verification starts. IDKit's current
+ *    protocol requires every request to carry a `rp_context`: a nonce/
+ *    timestamp bundle signed by the app's RP signing key. Rather than us
+ *    holding that key (real testing confirmed the app stays Developer-
+ *    Portal-managed unless explicitly and irreversibly switched to
+ *    self-managed — a step deliberately avoided here, since it changes
+ *    on-chain transaction custody for the RP, not just this signature),
+ *    World's own API signs it for us: this calls a Portal-hosted endpoint,
+ *    authenticated with an API key, and returns the already-signed context.
+ *  - `verifyWorldProof()` — AFTER the World App produces a proof. Forwards
+ *    it, byte-for-byte, to World's verify endpoint. Deliberately NOT built
+ *    on `@worldcoin/idkit-core/backend`'s `verifyCloudProof` helper anymore:
+ *    that helper reshapes its input into the older v3 body shape (spreading
+ *    the proof plus its own re-hashed `signal_hash`), and real testing
+ *    showed the current endpoint wants the complete v4 result — a
+ *    `responses` array — forwarded exactly as IDKit produced it, not
+ *    remapped.
  *
- * Uniqueness ("one human, one Chef account") is enforced by World itself, via
- * the per-action verification limit configured on `chef-onboarding` in the
- * Developer Portal — a second proof from the same person for the same action
- * comes back as `max_verifications_reached`. That is why this module stores
- * nothing: there is no local nullifier table to get out of sync, and the
- * nullifier it returns is for the caller to bind to an account, not for us to
- * keep here.
+ * Both endpoint URLs below are informed inference, not verified against
+ * reachable docs (docs.world.org is blocked from this project's dev
+ * sandbox) or installed SDK source — real, live testing is what will
+ * confirm or correct them. See docs/engineering-log.md for the full trail:
+ * what changed, why, and what's still inference vs. confirmed.
+ *
+ * Uniqueness ("one human, one Chef account") is enforced by World itself,
+ * via the per-action verification limit configured on `chef-onboarding` in
+ * the Developer Portal — a second proof from the same person for the same
+ * action comes back as `max_verifications_reached`. That is why this module
+ * stores nothing: there is no local nullifier table to get out of sync, and
+ * the nullifier it returns is for the caller to bind to an account, not for
+ * us to keep here.
  */
 
-import {
-  type IVerifyResponse,
-  verifyCloudProof,
-} from '@worldcoin/idkit-core/backend'
+export const NOT_CONFIGURED =
+  'World ID is not configured on this deployment.' as const
 
-/** Exactly the fields IDKit's `ISuccessResult` carries back from World App. */
-export interface WorldProof {
-  proof: string
-  merkle_root: string
-  nullifier_hash: string
-  verification_level: string
+// Overridable via env for when the real host/path turns out to differ from
+// this inference, without another deploy — see the module doc comment.
+const RP_CONTEXT_ENDPOINT_BASE =
+  process.env.WORLD_RP_CONTEXT_ENDPOINT_BASE ??
+  'https://developer.worldcoin.org/api/v4/rp-context'
+const VERIFY_ENDPOINT_BASE =
+  process.env.WORLD_VERIFY_ENDPOINT_BASE ??
+  'https://developer.worldcoin.org/api/v4/verify'
+
+/** What IDKit's `IDKitRequestConfig.rp_context` needs, verbatim. */
+export interface SignedRpContext {
+  rp_id: string
+  nonce: string
+  created_at: number
+  expires_at: number
+  signature: string
+}
+
+export type RpContextResult =
+  | { status: 'ok'; rpContext: SignedRpContext }
+  | { status: 'error'; message: string }
+
+/**
+ * Asks World to sign a fresh `rp_context` for this app/action. Called once
+ * per verification attempt, immediately before opening the IDKit widget —
+ * `rp_context` carries its own short expiry, so it can't be fetched once and
+ * reused across attempts.
+ */
+export async function fetchSignedRpContext(opts: {
+  apiKey: string
+  appId: string
+  action: string
+}): Promise<RpContextResult> {
+  if (!opts.apiKey) return { status: 'error', message: NOT_CONFIGURED }
+
+  const url = new URL(RP_CONTEXT_ENDPOINT_BASE)
+  url.searchParams.set('app_id', opts.appId)
+  url.searchParams.set('action', opts.action)
+
+  let res: Response
+  try {
+    res = await fetch(url, {
+      headers: { Authorization: `Bearer ${opts.apiKey}` },
+    })
+  } catch (err) {
+    return { status: 'error', message: (err as Error).message }
+  }
+  if (!res.ok) {
+    return {
+      status: 'error',
+      message: `World returned ${res.status} fetching rp_context.`,
+    }
+  }
+
+  const body = (await res.json().catch(() => null)) as Record<
+    string,
+    unknown
+  > | null
+  // Guarding both a flat response and one nested under `rp_context`, since
+  // this endpoint's exact shape is inferred, not confirmed — see the module
+  // doc comment.
+  const rpContext = (body?.rp_context ?? body) as SignedRpContext | null
+  if (!rpContext?.signature) {
+    return {
+      status: 'error',
+      message: 'World did not return a signed rp_context.',
+    }
+  }
+  return { status: 'ok', rpContext }
 }
 
 export type WorldVerificationResult =
@@ -63,59 +128,60 @@ export type WorldVerificationResult =
   /** Never reached World — network, or the deployment has no app id configured. */
   | { status: 'error'; message: string }
 
-export const NOT_CONFIGURED =
-  'World ID is not configured on this deployment.' as const
-
-// Overridable via env for when the real host/path turns out to differ from
-// this inference (see the module doc comment above) without another deploy.
-const VERIFY_ENDPOINT_BASE =
-  process.env.WORLD_VERIFY_ENDPOINT_BASE ??
-  'https://developer.worldcoin.org/api/v4/verify'
-
 /**
- * Asks World whether `proof` is a real, unspent proof of a unique human for
- * `action`, bound to `signal`.
+ * Forwards `proof` — the complete, unmodified result IDKit's `onSuccess`/
+ * `handleVerify` handed the browser — to World's verify endpoint.
  *
- * `signal` must be byte-identical to the one the browser passed to IDKit: it
- * is committed to inside the proof, so a proof captured for one account can't
- * be replayed to verify another. Passing a different value here doesn't fail
- * open — World rejects it.
+ * Deliberately typed as `Record<string, unknown>` rather than a narrow
+ * interface: the whole point is to forward exactly what IDKit produced,
+ * not a hand-picked subset that could silently drop a field the endpoint
+ * needs.
  */
 export async function verifyWorldProof(opts: {
   appId: string
-  action: string
-  signal: string
-  proof: WorldProof
+  proof: Record<string, unknown>
 }): Promise<WorldVerificationResult> {
   if (!opts.appId) return { status: 'error', message: NOT_CONFIGURED }
 
-  let response: IVerifyResponse
+  let res: Response
   try {
-    response = await verifyCloudProof(
-      opts.proof as Parameters<typeof verifyCloudProof>[0],
-      opts.appId as `app_${string}`,
-      opts.action,
-      opts.signal,
-      `${VERIFY_ENDPOINT_BASE}/${opts.appId}`,
-    )
+    res = await fetch(`${VERIFY_ENDPOINT_BASE}/${opts.appId}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(opts.proof),
+    })
   } catch (err) {
     return { status: 'error', message: (err as Error).message }
   }
 
-  if (response.success) {
-    return { status: 'verified', nullifierHash: opts.proof.nullifier_hash }
+  const body = (await res.json().catch(() => ({}))) as {
+    code?: string
+    message?: string
+    detail?: string
   }
 
+  if (res.ok) {
+    return { status: 'verified', nullifierHash: extractNullifier(opts.proof) }
+  }
   // World's own name for "this person already did this action". Surfaced as
   // its own outcome because the product has a real screen for it, not a
   // generic failure toast.
-  if (response.code === 'max_verifications_reached') {
+  if (body.code === 'max_verifications_reached') {
     return { status: 'already_registered' }
   }
-
   return {
     status: 'invalid',
-    code: response.code ?? 'unknown',
-    detail: response.detail ?? 'World rejected the proof.',
+    code: body.code ?? 'unknown',
+    detail: body.message ?? body.detail ?? 'World rejected the proof.',
   }
+}
+
+/** v4's nullifier lives per-credential-response, not at the top level. */
+function extractNullifier(proof: Record<string, unknown>): string {
+  const responses = proof.responses
+  if (Array.isArray(responses) && responses.length > 0) {
+    const first = responses[0] as Record<string, unknown>
+    if (typeof first.nullifier === 'string') return first.nullifier
+  }
+  return 'unknown'
 }
