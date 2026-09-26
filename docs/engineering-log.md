@@ -1624,3 +1624,22 @@ old path's first bytes `3c 21 64 6f` (Santino's exact error), new path's
 `00 61 73 6d`, `application/wasm`, 895 KB. `vite build` was never affected
 (it already emits `idkit_wasm_bg-*.wasm` as an asset), so this is
 dev-only — deployment doesn't need it, but it doesn't hurt either.
+
+### Fri 26 Sept — first real World ID 4.0 verification, end to end
+
+After the Vite fix (fresh `--force` dep cache), the IDKit v4 widget stayed
+open with a real QR (`connectorURI: https://world.org/verify?...`). Santino
+scanned it with World App, approved, and the app landed on "VERIFIED —
+You're a Chef" with `nullifier · 0x0a569e2c…863598`. That screen is only
+reachable when `apps/service`'s `POST /world/verify` gets an OK from
+World's `/api/v4/verify/{app_id}`, and the nullifier is read from the v4
+result's `responses[0].nullifier` — not the `'unknown'` fallback, not the
+simulator's `0x7c4f…`. So every link is now confirmed by a live run rather
+than inference: locally signed `rp_context` (rotated Portal signer key) →
+v4 widget + WASM → World App proof → server-side v4 verify.
+
+Still to exercise live: the rejection path. A second proof from the same
+person for `chef-onboarding` should come back `max_verifications_reached`
+and land on the "already a Chef" screen — assuming the action's
+verification limit in the Portal is set to one, which hasn't been checked
+directly.
