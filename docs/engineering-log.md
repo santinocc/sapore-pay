@@ -867,3 +867,21 @@ the intended flow outside the sandbox, not just via curl.
 Next to exercise for the first time: `createPrivyRecordWriter` — the Chef's
 own connected Privy wallet signing `writeChefRecords()` directly, via the
 "Set payout address" step now showing on screen.
+
+### Fri 26 Sept — WalletConnect's "Continue" button was mislabeled on the payout step
+
+Santino's browser closed mid-session; he reopened `localhost:5174`, redid
+World ID + claimed a fresh alias (`mario.sapore.eth`, simulated mode this
+time), then switched the Payout step to Real (Sepolia). Privy correctly
+restored his existing session with no re-login needed — but the resulting
+"Wallet ready / You're signed in" screen said "Continue to claim your name
+→", which is wrong on the payout step; claiming was already done.
+
+Root cause: `WalletConnect` is shared between the claim step and the
+payout step (`App.tsx`'s single `needsWallet` flag covers both), but its
+`Ready` screen hardcoded the claim-step's button text with no way for the
+caller to say which step actually asked for the wallet. Fixed by adding a
+`continueLabel` prop to `WalletConnect`/`Ready`, and having `App.tsx` pass
+"Continue to set payout address" when `recordNeedsWallet` is what
+triggered the gate, "Continue to claim your name" otherwise. `pnpm build`
+and Biome both clean.

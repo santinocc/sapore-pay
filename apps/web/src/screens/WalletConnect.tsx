@@ -18,8 +18,10 @@ type ReadyChefWallet = Extract<ChefWalletState, { status: 'ready' }>
 
 export function WalletConnect({
   onReady,
+  continueLabel = 'Continue to claim your name',
 }: {
   onReady: (wallet: ReadyChefWallet) => void
+  continueLabel?: string
 }) {
   const { login, logout } = usePrivy()
   const { createWallet } = useCreateWallet()
@@ -36,6 +38,7 @@ export function WalletConnect({
   return (
     <Ready
       address={state.address}
+      continueLabel={continueLabel}
       onContinue={() => onReady(state)}
       onLogout={logout}
     />
@@ -125,10 +128,12 @@ function NeedsWallet({
 
 function Ready({
   address,
+  continueLabel,
   onContinue,
   onLogout,
 }: {
   address: `0x${string}`
+  continueLabel: string
   onContinue: () => void
   onLogout: () => void
 }) {
@@ -145,7 +150,7 @@ function Ready({
         className="wc-btn wc-btn--primary"
         onClick={onContinue}
       >
-        Continue to claim your name →
+        {continueLabel} →
       </button>
       <button type="button" className="wc-btn wc-btn--ghost" onClick={onLogout}>
         Use a different account

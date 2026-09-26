@@ -149,7 +149,16 @@ export function App() {
             onClaimEns={() => setStep({ kind: 'ens-claim' })}
           />
         )}
-        {needsWallet && <WalletConnect onReady={setChefWallet} />}
+        {needsWallet && (
+          <WalletConnect
+            onReady={setChefWallet}
+            continueLabel={
+              recordNeedsWallet
+                ? 'Continue to set payout address'
+                : 'Continue to claim your name'
+            }
+          />
+        )}
         {step.kind === 'ens-claim' && !needsWallet && (
           <EnsClaim
             // Deliberately not keyed on claimMode: switching Simulated <->
