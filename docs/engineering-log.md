@@ -829,3 +829,24 @@ this — it only stops browser JS from other origins, not direct API calls.
 Real gating needs the wallet-login session design just reconciled in
 docs/sapore-api-contract.md (caller must be World ID verified and own
 `ownerAddress`) — real scope, not fixed here, flagged rather than hidden.
+
+
+### Fri 26 Sept, early — apps/service never actually loaded .env
+
+Right after the CORS fix, Santino got a step further and hit a real
+config error: "ENS backend is not configured on this deployment" —
+despite having added `ENS_BACKEND_PRIVATE_KEY` to `apps/service/.env`
+earlier. Root cause: `apps/service/src/index.ts` never loaded `.env` files
+at all. Unlike the deploy scripts (each of which explicitly does
+`import 'dotenv/config'`), `index.ts` just read `process.env` directly via
+`loadConfig()`, and plain Node doesn't auto-load `.env` — the file sat
+there, correctly filled in, never read by anything.
+
+Added `dotenv` as a dependency and `import 'dotenv/config'` to the top of
+`index.ts`, matching the pattern the deploy scripts already use. Verified
+directly in this sandbox with a real `.env` and a live `curl` against
+`/ens/chef/:label/availability`: the service now genuinely attempts a real
+`isAvailable()` call against Sepolia — it fails here only on this
+sandbox's own network egress allowlist (`ethereum-sepolia-rpc.publicnode.com`
+not permitted), which doesn't apply to a normal machine with real
+internet access. `pnpm build` and Biome both clean.
