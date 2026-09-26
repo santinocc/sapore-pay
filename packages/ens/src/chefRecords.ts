@@ -108,6 +108,11 @@ export type WriteRecordsOutcome =
 const RESOLVER_LOOKUP_RETRIES = 3
 const RESOLVER_LOOKUP_RETRY_DELAY_MS = 1200
 
+// Comfortably above what a 2-4 call multicall (setAddr x2, optionally
+// setText x2) actually costs on Sepolia — see the comment where this is
+// used, on why a fixed value is needed at all.
+const WRITE_RECORDS_GAS_LIMIT = 600_000n
+
 export async function writeChefRecords(
   publicClient: PublicClient,
   walletClient: WalletClient,
@@ -168,6 +173,16 @@ export async function writeChefRecords(
       abi: resolverAbi,
       functionName: 'multicall',
       args: [encoded],
+      // Privy's embedded-wallet provider (wrapped via viem's custom()
+      // transport in privyWallet.ts) is what actually estimates gas for
+      // this call — not a direct eth_estimateGas against the RPC node the
+      // way apps/service's backend-signed writes go — and it under-
+      // estimates for a multicall this size, rejecting the tx with
+      // "intrinsic gas too low" before the resolver ever runs. A fixed,
+      // generous limit sidesteps that provider-side estimate entirely;
+      // most wallet providers use a caller-supplied gas value as-is rather
+      // than re-estimating.
+      gas: WRITE_RECORDS_GAS_LIMIT,
     })
     await publicClient.waitForTransactionReceipt({ hash: txHash })
     return { status: 'written', txHash, resolver }

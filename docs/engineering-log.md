@@ -1225,3 +1225,32 @@ here (confirmed via the agent proxy's own status endpoint, same
 restriction noted earlier in this log), only to GitHub via WebFetch, which
 is how the interface itself got verified. Next real test is Santino's own
 machine.
+
+### Fri 26 Sept — the getResolver fix worked; hit a real gas estimation bug next
+
+Confirmed live on Santino's machine: the resolver lookup fix worked. For
+the first time all session, a real Privy signature prompt appeared showing
+an actual constructed transaction (`To: 0x0356...2858`, the real shared
+resolver) — proof `getResolver(label)` found it correctly this time. Privy
+did warn "Execution reverted for an unknown reason" in its own pre-flight
+simulation, but on Sepolia with a sub-cent fee, approving it anyway to get
+a real on-chain answer was the fastest way to find out what that meant —
+it came back "intrinsic gas too low," not the "unauthorized" outcome the
+revert warning might have suggested.
+
+"Intrinsic gas too low" is an RPC-level rejection before the resolver
+contract even runs — the declared gas limit was below the minimum needed
+just to include a transaction with this much calldata (a multicall
+bundling 2-4 `setAddr`/`setText` calls isn't small). `writeChefRecords()`'s
+`walletClient.writeContract()` call never set an explicit `gas` value,
+relying on automatic estimation — which works fine for `apps/service`'s
+backend-signed writes (a real viem `WalletClient` talking straight to an
+RPC node), but the Chef-signed path routes through Privy's own embedded-
+wallet provider (`custom(provider)` in `privyWallet.ts`), which does its
+own gas estimation for `eth_sendTransaction` and underestimated for a call
+this size.
+
+Fixed by passing an explicit `gas: 600_000n` on that write — comfortably
+above what a 2-4 call multicall actually costs, and most wallet providers
+use a caller-supplied gas value as-is rather than re-estimating once it's
+present. `pnpm --filter @sapore-pay/ens build` and Biome both clean.
