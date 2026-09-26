@@ -803,3 +803,29 @@ Scope note: the actual implementation is private-repo work
 (`packages/server/src/routes/auth.ts` there), out of what this repo is
 judged on. This update keeps the two repos' shared understanding
 accurate ahead of that work, rather than building it now.
+
+
+### Fri 26 Sept, early — CORS was the actual blocker on the first real claim attempt
+
+Santino got apps/service running and tried a real claim ("pepe") — got
+"Failed to fetch" instead of a hang (confirming yesterday's error-handling
+fix works), but the claim itself still couldn't reach the service.
+Browser CORS, not a real network failure: apps/web (Vite, auto-incremented
+to port 5174 since 5173 was taken) calling apps/service (port 4000)
+cross-origin, and Express had zero CORS configuration — the browser blocks
+the request before it reaches the service at all, which is also why the
+only detail `fetch` gives is the generic "Failed to fetch."
+
+Added the `cors` package, a `WEB_ORIGIN` config entry (comma-separated,
+defaults to localhost:5173-5175 to cover Vite's auto-increment behavior),
+and wired it into app.ts.
+
+While in there, added an honest comment on both `/ens/chef/claim` and
+`/ens/chef/records`: neither has any authentication yet. Anyone who can
+reach the service can register any available alias to any address for
+free, or write payout records for any name (the backend key holds
+ROOT_RESOURCE roles on the resolver). CORS was never protection against
+this — it only stops browser JS from other origins, not direct API calls.
+Real gating needs the wallet-login session design just reconciled in
+docs/sapore-api-contract.md (caller must be World ID verified and own
+`ownerAddress`) — real scope, not fixed here, flagged rather than hidden.

@@ -26,6 +26,15 @@ const schema = z.object({
   ENS_SHARED_RESOLVER: z
     .string()
     .default('0x0356d23bcfBe2Cb42508542c930C7A2cCa352858'),
+
+  // Comma-separated origins allowed to call this service from a browser.
+  // Vite auto-increments past 5173 when the port's taken (5174, 5175, ...),
+  // hence the range rather than one fixed port.
+  WEB_ORIGIN: z
+    .string()
+    .default(
+      'http://localhost:5173,http://localhost:5174,http://localhost:5175',
+    ),
 })
 
 export type Config = z.infer<typeof schema>
