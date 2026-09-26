@@ -850,3 +850,20 @@ directly in this sandbox with a real `.env` and a live `curl` against
 sandbox's own network egress allowlist (`ethereum-sepolia-rpc.publicnode.com`
 not permitted), which doesn't apply to a normal machine with real
 internet access. `pnpm build` and Biome both clean.
+
+### Fri 26 Sept — first real end-to-end ENS claim, on Santino's machine
+
+After pulling `018d657` and restarting `apps/service`, Santino claimed
+`jose.sapore.eth` in "Real (Sepolia)" mode through the actual browser UI —
+World ID step → Privy embedded wallet already connected → ENS claim called
+the live `apps/service` → `SaporeChefRegistrar.register()` on Sepolia →
+delegated write access, same as the scripted `05-register-chef.mjs` run,
+but this time driven entirely from the product UI with a Privy-created
+wallet address instead of a manually-funded deploy-script key. UI correctly
+landed on "CLAIMED — jose.sapore.eth is yours" and moved to the payout-address
+step. This is the first real proof the CORS + dotenv fixes actually unblock
+the intended flow outside the sandbox, not just via curl.
+
+Next to exercise for the first time: `createPrivyRecordWriter` — the Chef's
+own connected Privy wallet signing `writeChefRecords()` directly, via the
+"Set payout address" step now showing on screen.
