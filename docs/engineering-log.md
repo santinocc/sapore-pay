@@ -1302,3 +1302,86 @@ successfully.
 
 Nothing left to fix from this run — recorded as the milestone it is, not
 folded silently into the next bug report.
+
+### Fri 26 Sept — real World ID, and a genuine SDK-version tradeoff caught in time
+
+With the PR merged and ~20 hours left before the ETHGlobal Tokyo submission
+deadline (Sun 09:00 JST), World ID was the last targeted-prize gap: `packages/world`
+was still a planning-comment stub, and `apps/web`'s onboarding step had been
+simulated all session.
+
+Started by installing `@worldcoin/idkit` to inspect its real types before
+writing anything — and it resolved to `4.3.0`, not the `app_id`/`action`/`signal`
+model the repo's own planning comment (and an initial web search) assumed.
+Reading the actual installed `.d.ts` files (not a webpage summary) showed v4 is
+a materially different protocol: every request requires a `rp_context` —
+a nonce/timestamp bundle that must be signed with an RP private key
+(`@worldcoin/idkit-server`'s `signRequest({ signingKeyHex, ... })`, confirmed
+by reading its own source) — plus a QR-code/polling flow (`connectorURI`,
+`pollUntilCompletion()`) in place of a simple modal callback.
+
+Checked `npm view @worldcoin/idkit versions` and found the real version
+history jumps straight from `2.4.2` to `4.0.0-dev.*` — no 3.x ever shipped.
+`2.4.2` is a real, currently-installable release with the classic
+widget/callback model, and v4 itself still ships `orbLegacy`/`deviceLegacy`
+presets documented as "for compatibility with older IDKit versions" — so old
+proofs remain first-class in the protocol, not a dead path.
+
+Given the deadline, flagged this tradeoff to Santino directly rather than
+picking silently: v2.4.2 (lower risk, well-documented, still fully real — not
+simulated) vs. v4 (current, but requires learning RP-signing live under time
+pressure, plus a rebuilt polling-based UX). He created the World app in the
+Developer Portal while this was being resolved; its Configuration page showed
+the RP's signer key is **Developer-Portal-managed by default** ("Switch to
+self-managed" is a separate opt-in danger-zone action) — which would have
+removed the signing concern specifically, but the QR/polling UX rebuild and
+the still-unconfirmed v4 server-verify shape remained. Session model was
+switched to Opus for this decision and the implementation that followed, on
+Santino's own call given the stakes; switched back to Sonnet once the design
+and hard verification work were done and what remained was mechanical.
+
+Went with **v2.4.2**. Installed it, then read its actual types rather than
+trust the same kind of summary that had just been wrong once already:
+`useIDKit()` for imperative open control, `IDKitWidget` (`app_id`, `action`,
+`signal`, `verification_level`, `handleVerify`, `onSuccess`, `onError`),
+`ISuccessResult` (`proof`, `merkle_root`, `nullifier_hash`,
+`verification_level`), and — the best find — `verifyCloudProof` exported from
+`@worldcoin/idkit-core/backend`, IDKit's own official server-verification
+helper, so `packages/world` didn't need a hand-rolled HTTP call to World's
+verify endpoint at all.
+
+Implemented:
+- `packages/world/src/index.ts` — replaced the stub with `verifyWorldProof()`,
+  calling `verifyCloudProof` and mapping World's own `max_verifications_reached`
+  code onto `already_registered` — that's World's per-action verification
+  limit doing the "one human, one Chef account" enforcement natively, which is
+  also why this module stores nothing: there's no local nullifier table to
+  keep in sync with World's own.
+- `apps/service`: new `WORLD_APP_ID`/`WORLD_ACTION` config (empty-string
+  default, same "report not configured rather than crash" pattern as
+  `ENS_BACKEND_PRIVATE_KEY`), and `POST /world/verify`, deliberately left
+  without auth — a caller can't forge a World proof, and a replayed one is
+  bound to its original `signal`, so the worst outcome of an unauthenticated
+  hit is being told your own real proof is valid.
+- `apps/web/src/lib/worldVerifier.tsx` (new) — the actual bridge work: IDKit
+  is a mounted component owning a modal, not an awaitable function, but
+  `ChefOnboarding` is built around `await verifier.verify(...)`. Wraps the
+  widget in a hook that opens it and returns a promise IDKit's own callbacks
+  settle. The one gap IDKit has no callback for — closing the modal without
+  acting — is caught by watching the widget's own `open` state transition
+  from true to false with a promise still pending; left unhandled, that's the
+  same "hangs on a spinner forever" class of bug the ENS claim screen hit
+  earlier this session, just in a new place.
+- `apps/web/src/App.tsx` — the World step now shares the same Real/Simulated
+  toggle as Claim/Payout, gated on `VITE_WORLD_APP_ID` being set (no dead
+  "Real" option that can only ever fail); the widget is mounted outside the
+  step switch since unmounting it mid-verification would strand the promise.
+
+`pnpm -r build` clean across all 9 workspace packages; Biome clean on every
+touched file (one real compiler catch along the way: an early draft read
+`.message` off a union where two of the three non-`verified` branches don't
+have one — fixed with an exhaustive switch instead of narrowing on `!==`).
+
+Not yet tested against a real phone/World App — that's Santino's next step,
+same "real chain, sandbox has no egress to it" limitation as ENSv2 and
+Privy before it.

@@ -1,3 +1,4 @@
+import { verifyWorldProof } from '@sapore-pay/world'
 import cors from 'cors'
 import express, { type Express } from 'express'
 import { createEnsChefClient } from './chain/ensChef.js'
@@ -13,6 +14,27 @@ export function createApp(config: Config): Express {
 
   app.get('/health', (_req, res) => {
     res.json({ status: 'ok', service: 'sapore-pay' })
+  })
+
+  // The trust decision for "is this a unique human", made here and never in
+  // the browser. apps/web's IDKit widget produces the proof; this route is
+  // what asks World whether it's real. Unlike the ENS routes below, this one
+  // needs no auth to be safe: a caller can't forge a World proof, and a
+  // replayed one is bound to its original `signal` — the worst a stranger
+  // hitting this endpoint achieves is being told their own proof is valid.
+  app.post('/world/verify', async (req, res) => {
+    const { signal, proof } = req.body ?? {}
+    if (typeof signal !== 'string' || !proof || typeof proof !== 'object') {
+      res.status(400).json({ message: 'signal and proof are required.' })
+      return
+    }
+    const outcome = await verifyWorldProof({
+      appId: config.WORLD_APP_ID,
+      action: config.WORLD_ACTION,
+      signal,
+      proof,
+    })
+    res.json(outcome)
   })
 
   // Backs apps/web's createOnChainSubnameClaimer — see its doc comment for

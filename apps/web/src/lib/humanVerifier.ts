@@ -89,31 +89,10 @@ export function createSimulatedVerifier(
 }
 
 /**
- * Real verifier. Wired once `WORLD_APP_ID` and the `chef-onboarding` incognito
- * action exist in the Developer Portal — IDKit opens the modal, and the proof
- * goes to our service, never to the client's own judgement.
- *
- * Deliberately not stubbed out with fake success: an unconfigured deploy must
- * report that it is unconfigured, not quietly verify everyone.
+ * The real verifier lives in worldVerifier.tsx, not here: IDKit is a mounted
+ * React component that owns a modal, so it has to be a hook returning both a
+ * verifier and a widget, rather than a plain factory like the simulated one
+ * above. It implements this same `HumanVerifier` interface — which is the
+ * whole point of having one: every screen written against the simulated
+ * verifier works unchanged against the real one.
  */
-export function createWorldVerifier(opts: {
-  serviceUrl: string
-  appId: string
-}): HumanVerifier {
-  return {
-    async verify(action, signal): Promise<VerificationOutcome> {
-      if (!opts.appId) {
-        return {
-          status: 'error',
-          message: 'World ID is not configured on this deployment.',
-        }
-      }
-      // TODO(hackathon): open IDKit, then POST the proof to
-      // `${opts.serviceUrl}/verify/world` which calls World's
-      // /api/v2/verify/{app_id} and stores ONLY the nullifier hash.
-      void action
-      void signal
-      return { status: 'error', message: 'Not yet implemented.' }
-    },
-  }
-}

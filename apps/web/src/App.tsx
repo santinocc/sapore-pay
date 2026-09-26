@@ -30,6 +30,7 @@ import {
   type SimulatedClaimScenario,
 } from './lib/ensClaim'
 import {
+  CHEF_ONBOARDING_ACTION,
   createSimulatedVerifier,
   type SimulatedScenario,
 } from './lib/humanVerifier'
@@ -39,6 +40,7 @@ import {
   createSimulatedRecordWriter,
   type SimulatedRecordScenario,
 } from './lib/recordWriter'
+import { useWorldVerifier, WORLD_APP_ID } from './lib/worldVerifier'
 import { ChefOnboarding } from './screens/ChefOnboarding'
 import { EnsClaim } from './screens/EnsClaim'
 import { PayoutRecords } from './screens/PayoutRecords'
@@ -80,6 +82,8 @@ const RECORD_SCENARIOS: { id: SimulatedRecordScenario; label: string }[] = [
   { id: 'error', label: 'Tx error' },
 ]
 
+const DEMO_ACCOUNT_ID = 'demo-cooker-0x01'
+
 export function App() {
   const [step, setStep] = useState<Step>({ kind: 'onboarding' })
   const [chefWallet, setChefWallet] = useState<ChefWallet | null>(null)
@@ -87,10 +91,18 @@ export function App() {
   const [worldScenario, setWorldScenario] =
     useState<SimulatedScenario>('verified')
   const [worldRun, setWorldRun] = useState(0)
-  const worldVerifier = useMemo(
+  const simulatedVerifier = useMemo(
     () => createSimulatedVerifier(worldScenario),
     [worldScenario],
   )
+  // Mounted unconditionally — hooks can't be called behind a branch, and the
+  // widget renders nothing until opened. Which verifier the screen actually
+  // gets is decided below, by `mode`.
+  const world = useWorldVerifier({
+    serviceUrl: SERVICE_URL,
+    action: CHEF_ONBOARDING_ACTION,
+    signal: DEMO_ACCOUNT_ID,
+  })
 
   // One shared Simulated/Real toggle for both steps, not two independent
   // ones. Two independent toggles meant Payout's toggle — the only place
@@ -101,6 +113,13 @@ export function App() {
   // One toggle, decided once (on the Claim step, where it's first shown),
   // carries forward automatically.
   const [mode, setMode] = useState<Mode>('simulated')
+
+  // Real mode needs a configured app id; without one the real verifier only
+  // ever reports "not configured", so fall back rather than dead-end the
+  // demo. WORLD_APP_ID is compile-time (Vite env), so this can't flip at
+  // runtime — it's a deployment fact, not a toggle.
+  const worldVerifier =
+    mode === 'real' && WORLD_APP_ID ? world.verifier : simulatedVerifier
 
   const [claimScenario, setClaimScenario] =
     useState<SimulatedClaimScenario>('claimed')
@@ -165,12 +184,20 @@ export function App() {
         <StepDot active={step.kind === 'payout'} done={false} label="Payout" />
       </nav>
 
+      {/* Renders nothing until verify() opens it, so it sits outside the
+          step switch — unmounting it mid-verification would strand the
+          promise ChefOnboarding is awaiting. */}
+      {world.widget}
+
       <main className="shell__main">
         {step.kind === 'onboarding' && (
           <ChefOnboarding
+            // Not keyed on mode: flipping Simulated <-> Real shouldn't reset
+            // a verification already in progress. The scenario chips still
+            // force a fresh run, same as the other steps.
             key={`world-${worldScenario}-${worldRun}`}
             verifier={worldVerifier}
-            accountId="demo-cooker-0x01"
+            accountId={DEMO_ACCOUNT_ID}
             onClaimEns={() => setStep({ kind: 'ens-claim' })}
           />
         )}
@@ -222,7 +249,11 @@ export function App() {
               : 'payout records'}
           <span className="demo__note">
             {step.kind === 'onboarding' &&
-              'World ID is simulated until the app id is configured.'}
+              (!WORLD_APP_ID
+                ? 'World ID is simulated until VITE_WORLD_APP_ID is configured.'
+                : mode === 'real'
+                  ? `A real World ID proof, checked server-side by ${SERVICE_URL} via World's cloud verify. Needs World App on your phone.`
+                  : 'Simulated. Switch to Real to open World App and prove a real unique human.')}
             {step.kind === 'ens-claim' &&
               (mode === 'real'
                 ? `Calls ${SERVICE_URL} — a real SaporeChefRegistrar.register() on ENSv2 Sepolia, signed by Sapore's backend, for your connected wallet's address. Real mode also carries through to Payout automatically — no need to flip a second toggle there.`
@@ -233,11 +264,15 @@ export function App() {
                 : 'Simulated. Switch to Real (Sepolia) to write real resolver records with your own wallet.')}
           </span>
         </p>
-        {(step.kind === 'ens-claim' || step.kind === 'payout') && (
+        {/* The World step gets the toggle too now that a real verifier
+            exists — but only when an app id is actually configured, since
+            without one "Real" would just report not-configured. */}
+        {(step.kind !== 'onboarding' || WORLD_APP_ID !== '') && (
           <ModeToggle mode={mode} onChange={handleModeChange} />
         )}
         <div className="demo__row">
           {step.kind === 'onboarding' &&
+            mode === 'simulated' &&
             WORLD_SCENARIOS.map((s) => (
               <button
                 key={s.id}

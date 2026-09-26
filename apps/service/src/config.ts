@@ -36,6 +36,14 @@ const schema = z.object({
     .string()
     .default('0x9a932e911c7FD7DfD54d1B11Ef4fE0c9aa46862d'),
 
+  // World ID — the app and action registered in the Developer Portal.
+  // No default for the app id, deliberately: an unconfigured deployment must
+  // report that it is unconfigured rather than quietly verifying everyone
+  // (see packages/world). WORLD_ACTION matches CHEF_ONBOARDING_ACTION in
+  // apps/web's humanVerifier.ts — the same string is registered on the app.
+  WORLD_APP_ID: z.string().default(''),
+  WORLD_ACTION: z.string().default('chef-onboarding'),
+
   // Comma-separated origins allowed to call this service from a browser.
   // Vite auto-increments past 5173 when the port's taken (5174, 5175, ...),
   // hence the range rather than one fixed port.
