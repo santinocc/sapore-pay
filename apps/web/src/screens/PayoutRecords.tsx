@@ -33,6 +33,12 @@ export function PayoutRecords({
   fullName: string
   defaultAddress?: string
 }) {
+  // A connected wallet's address is fixed, not a suggestion: it's the same
+  // wallet that signed the claim, and payouts going anywhere else defeats
+  // the point of tying the ENS name to that wallet in the first place. Only
+  // Simulated mode (no defaultAddress — no real wallet to fix it to) leaves
+  // this typeable, for exercising the demo scenarios freely.
+  const locked = defaultAddress !== ''
   const [phase, setPhase] = useState<Phase>({
     kind: 'input',
     address: defaultAddress,
@@ -69,6 +75,7 @@ export function PayoutRecords({
       <InputForm
         fullName={fullName}
         address={phase.address}
+        locked={locked}
         error={phase.error}
         onSubmit={submit}
       />
@@ -101,11 +108,13 @@ function Card({
 function InputForm({
   fullName,
   address,
+  locked,
   error,
   onSubmit,
 }: {
   fullName: string
   address: string
+  locked: boolean
   error?: string
   onSubmit: (address: string) => void
 }) {
@@ -119,19 +128,29 @@ function InputForm({
         Tempo-specific record (ENSIP-11) in one transaction, so both resolve to
         the same wallet from the moment either is read.
       </p>
+      {locked && (
+        <p className="ec-lede">
+          This is the wallet you signed in with — the same one that claimed{' '}
+          {fullName}. Payouts always go here.
+        </p>
+      )}
       <form
         onSubmit={(e) => {
           e.preventDefault()
           onSubmit(value)
         }}
       >
-        <input
-          className="ec-input ec-input--wide"
-          value={value}
-          onChange={(e) => setValue(e.target.value)}
-          placeholder="0x…"
-          aria-label="Payout address"
-        />
+        {locked ? (
+          <p className="ec-mono">{value}</p>
+        ) : (
+          <input
+            className="ec-input ec-input--wide"
+            value={value}
+            onChange={(e) => setValue(e.target.value)}
+            placeholder="0x…"
+            aria-label="Payout address"
+          />
+        )}
         {error && <p className="ec-error">{error}</p>}
         <button type="submit" className="ec-btn ec-btn--primary">
           Set payout address

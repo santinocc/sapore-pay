@@ -904,3 +904,20 @@ a wallet other than the one you're logged in with is a legitimate case
 (e.g. a cold wallet for payouts, hot wallet for login), so prefill-but-
 overridable is the right default, not force-same-address. `pnpm build` and
 Biome both clean.
+
+### Fri 26 Sept — walked back "prefill but overridable"; locked it instead
+
+Santino pushed back on the previous entry's call: for Sapore Pay
+specifically, the embedded Privy wallet *is* the point — the ENS name is
+tied to it, the claim was signed by it, and letting someone retype a
+different payout address undermines exactly what the wallet-tied name is
+for. He's right, and it matches what `docs/sapore-api-contract.md` already
+settled on (login wallet = payout wallet by design) — the "editable
+override" reasoning in the previous entry didn't actually fit this app.
+
+Changed `PayoutRecords` so a connected wallet's address renders as a fixed
+`<p className="ec-mono">`, not an `<input>` — same treatment `EnsClaim`
+already gives the owner address (never shown as editable there either).
+Simulated mode (`defaultAddress === ''`, no real wallet to fix it to)
+keeps the free-text input, since it's only exercising demo scenarios, not
+a real address. `pnpm build` and Biome both clean.
