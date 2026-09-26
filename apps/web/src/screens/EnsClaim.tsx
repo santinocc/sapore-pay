@@ -13,7 +13,7 @@
  * is a real, valid, demoable state, not a bug to hide.
  */
 
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
 import {
   type ClaimOutcome,
   type SubnameClaimer,
@@ -211,13 +211,23 @@ function Claimed({
   autoAdvance: boolean
   onContinue?: () => void
 }) {
-  const firedRef = useRef(false)
-  // biome-ignore lint/correctness/useExhaustiveDependencies: fires once per mount by design (firedRef guards it); re-arming on every onContinue identity change would defeat that guard.
+  // A ref-guarded "fire once" breaks under StrictMode's dev-only double
+  // effect invocation (mount -> cleanup -> mount again): the ref flips to
+  // true before the first timer's cleanup cancels it, so the second
+  // invocation sees it already set and never schedules a replacement —
+  // onContinue never actually fires. A closure-local `cancelled` avoids
+  // that: each invocation only cancels its own timer.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: intentionally fires once per real mount when autoAdvance is true; onContinue is a fresh closure each render, not something this timer should re-arm against.
   useEffect(() => {
-    if (!autoAdvance || firedRef.current || !onContinue) return
-    firedRef.current = true
-    const timer = setTimeout(onContinue, AUTO_ADVANCE_MS)
-    return () => clearTimeout(timer)
+    if (!autoAdvance || !onContinue) return
+    let cancelled = false
+    const timer = setTimeout(() => {
+      if (!cancelled) onContinue()
+    }, AUTO_ADVANCE_MS)
+    return () => {
+      cancelled = true
+      clearTimeout(timer)
+    }
   }, [autoAdvance])
 
   return (

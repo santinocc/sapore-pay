@@ -14,7 +14,7 @@
  */
 
 import { useCreateWallet, usePrivy } from '@privy-io/react-auth'
-import { useEffect, useRef } from 'react'
+import { useEffect } from 'react'
 import { type ChefWalletState, useChefWallet } from '../lib/privyWallet'
 import './wallet-connect.css'
 
@@ -149,15 +149,22 @@ function Ready({
   onReady: () => void
   onLogout: () => void
 }) {
-  // Fires once per mount — a fresh login or a restored session both land
-  // here exactly once, and there's nothing to re-confirm on a re-render.
-  const firedRef = useRef(false)
-  // biome-ignore lint/correctness/useExhaustiveDependencies: fires once per mount by design (firedRef guards it), not on every onReady identity change.
+  // Deliberately not a ref-guarded "fire once": under StrictMode's dev-only
+  // double-invoke (mount -> cleanup -> mount again), a ref that flips to
+  // true before the first timer's cleanup cancels it would block the
+  // second invocation from ever scheduling a replacement — the timer never
+  // actually fires. A plain closure-local `cancelled` avoids that: each
+  // invocation owns and cancels only its own timer.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: intentionally fires once per real mount; onReady is a fresh setChefWallet-wrapping closure each render, not something this timer should re-arm against.
   useEffect(() => {
-    if (firedRef.current) return
-    firedRef.current = true
-    const timer = setTimeout(onReady, AUTO_CONTINUE_MS)
-    return () => clearTimeout(timer)
+    let cancelled = false
+    const timer = setTimeout(() => {
+      if (!cancelled) onReady()
+    }, AUTO_CONTINUE_MS)
+    return () => {
+      cancelled = true
+      clearTimeout(timer)
+    }
   }, [])
 
   return (

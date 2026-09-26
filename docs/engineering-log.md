@@ -1047,3 +1047,57 @@ Two real issues, not one:
    reads as a deliberate pause, not a hang.
 
 `pnpm build` and Biome both clean.
+
+### Fri 26 Sept — the wallet screen really was stuck: a StrictMode + ref-guard interaction
+
+Santino tested again after the previous entry's fixes and it was still
+stuck — now clearly showing "Continuing automatically…" and never
+continuing, well past 700ms. Not a timing issue after all.
+
+Root cause: `main.tsx` wraps the app in `<StrictMode>`, which in
+development deliberately double-invokes every effect once — mount, run
+its cleanup immediately, then mount again — specifically to surface bugs
+like this one. Both `WalletConnect`'s auto-continue and `EnsClaim`'s
+auto-advance used the same pattern: a `firedRef` ref flipped to `true`
+before scheduling `setTimeout`, with the effect's cleanup calling
+`clearTimeout`. Under StrictMode's double-invoke: the first invocation
+sets `firedRef.current = true` and schedules the timer; the immediate
+simulated-unmount cleanup cancels that timer; the second invocation checks
+`firedRef.current`, sees it already `true`, and returns without scheduling
+a replacement. No timer survives to ever fire — `onReady`/`onContinue`
+never gets called, and the screen sits there indefinitely. The ref was
+solving the wrong problem: it exists to stop *real* re-renders from
+re-arming the timer, but a mount-once effect (`deps: []`) doesn't need
+that protection at all — it needs each invocation to clean up only the
+timer it itself created.
+
+Fixed both by dropping the ref entirely in favor of a closure-scoped
+`cancelled` flag alongside the timer:
+
+```ts
+useEffect(() => {
+  let cancelled = false
+  const timer = setTimeout(() => {
+    if (!cancelled) onReady()
+  }, AUTO_CONTINUE_MS)
+  return () => {
+    cancelled = true
+    clearTimeout(timer)
+  }
+}, [])
+```
+
+Each invocation now owns and can only cancel its own timer, so StrictMode's
+extra mount cycle in dev correctly ends up with exactly one live timer that
+fires once — same as a real single mount would in production, where
+StrictMode's double-invoke doesn't happen at all. `PayoutRecords`'
+`autoSubmit` effect didn't have this bug (no `setTimeout`/cleanup pair to
+interact badly with the double-invoke — its ref guard alone is sufficient
+there), so left unchanged. `pnpm build` and Biome both clean.
+
+Also: the earlier screenshot showing "You're signed in" with no ENS name
+during this same test was correct, not a bug — that gate appears *before*
+any name is claimed (it's gating the Claim step itself), so there's
+nothing yet to show instead of the raw address. The "Signed in as
+`<name>`.sapore.eth" copy only applies once a name already exists, i.e.
+on the Payout step's wallet gate.
