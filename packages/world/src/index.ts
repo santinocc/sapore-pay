@@ -5,31 +5,26 @@
  * apps/web and hands back a proof; this module — called from apps/service —
  * is what asks World whether that proof is real.
  *
- * Two calls, two directions, both against World's own infrastructure:
+ * CORRECTION (see docs/engineering-log.md, Fri 26 Sept): an earlier version
+ * of this module fetched `rp_context` from a guessed Portal-hosted cloud
+ * endpoint, authenticated with an API key. Live testing returned a real 404
+ * — that endpoint doesn't exist. Reading `@worldcoin/idkit-server`'s actual
+ * installed source (not search results) settled it: the SDK's only signing
+ * path is `signRequest({signingKeyHex, ...})`, a pure local computation over
+ * a raw private key. There is no cloud "sign this for me" call in the
+ * protocol — every RP, whatever the Developer Portal's "self-managed"
+ * toggle means, needs its own signing key sitting in a server-only secret
+ * store. `buildSignedRpContext()` is that local computation now — no
+ * network call at all, which is also why it's synchronous.
  *
- *  - `fetchSignedRpContext()` — BEFORE a verification starts. IDKit's current
- *    protocol requires every request to carry a `rp_context`: a nonce/
- *    timestamp bundle signed by the app's RP signing key. Rather than us
- *    holding that key (real testing confirmed the app stays Developer-
- *    Portal-managed unless explicitly and irreversibly switched to
- *    self-managed — a step deliberately avoided here, since it changes
- *    on-chain transaction custody for the RP, not just this signature),
- *    World's own API signs it for us: this calls a Portal-hosted endpoint,
- *    authenticated with an API key, and returns the already-signed context.
+ *  - `buildSignedRpContext()` — BEFORE a verification starts. Signs a fresh
+ *    nonce/timestamp bundle with the RP's own key, entirely locally.
  *  - `verifyWorldProof()` — AFTER the World App produces a proof. Forwards
- *    it, byte-for-byte, to World's verify endpoint. Deliberately NOT built
- *    on `@worldcoin/idkit-core/backend`'s `verifyCloudProof` helper anymore:
- *    that helper reshapes its input into the older v3 body shape (spreading
- *    the proof plus its own re-hashed `signal_hash`), and real testing
- *    showed the current endpoint wants the complete v4 result — a
- *    `responses` array — forwarded exactly as IDKit produced it, not
- *    remapped.
- *
- * Both endpoint URLs below are informed inference, not verified against
- * reachable docs (docs.world.org is blocked from this project's dev
- * sandbox) or installed SDK source — real, live testing is what will
- * confirm or correct them. See docs/engineering-log.md for the full trail:
- * what changed, why, and what's still inference vs. confirmed.
+ *    it, byte-for-byte, to World's verify endpoint. This one *is* confirmed
+ *    by live testing: pointing it at `/api/v4/verify/{app_id}` changed the
+ *    server's answer from "Action not found." (v2 endpoint, wrong protocol
+ *    entirely) to "responses array is required" (right endpoint, proof body
+ *    still v2-shaped at the time) — the URL below is real, not inferred.
  *
  * Uniqueness ("one human, one Chef account") is enforced by World itself,
  * via the per-action verification limit configured on `chef-onboarding` in
@@ -40,14 +35,12 @@
  * us to keep here.
  */
 
+import { signRequest } from '@worldcoin/idkit-server'
+
 export const NOT_CONFIGURED =
   'World ID is not configured on this deployment.' as const
 
-// Overridable via env for when the real host/path turns out to differ from
-// this inference, without another deploy — see the module doc comment.
-const RP_CONTEXT_ENDPOINT_BASE =
-  process.env.WORLD_RP_CONTEXT_ENDPOINT_BASE ??
-  'https://developer.worldcoin.org/api/v4/rp-context'
+// Confirmed by live testing (see module doc comment) — not inference.
 const VERIFY_ENDPOINT_BASE =
   process.env.WORLD_VERIFY_ENDPOINT_BASE ??
   'https://developer.worldcoin.org/api/v4/verify'
@@ -66,52 +59,48 @@ export type RpContextResult =
   | { status: 'error'; message: string }
 
 /**
- * Asks World to sign a fresh `rp_context` for this app/action. Called once
- * per verification attempt, immediately before opening the IDKit widget —
+ * Signs a fresh `rp_context` for this RP/action, locally — called once per
+ * verification attempt, immediately before opening the IDKit widget.
  * `rp_context` carries its own short expiry, so it can't be fetched once and
- * reused across attempts.
+ * reused across attempts. `ttl` is generous (10 minutes) because the real
+ * flow includes a person picking up their phone and confirming in World
+ * App, not just opening a modal.
  */
-export async function fetchSignedRpContext(opts: {
-  apiKey: string
-  appId: string
+export function buildSignedRpContext(opts: {
+  signingKeyHex: string
+  rpId: string
   action: string
-}): Promise<RpContextResult> {
-  if (!opts.apiKey) return { status: 'error', message: NOT_CONFIGURED }
+}): RpContextResult {
+  if (!opts.signingKeyHex || !opts.rpId) {
+    return { status: 'error', message: NOT_CONFIGURED }
+  }
 
-  const url = new URL(RP_CONTEXT_ENDPOINT_BASE)
-  url.searchParams.set('app_id', opts.appId)
-  url.searchParams.set('action', opts.action)
-
-  let res: Response
+  let signed: {
+    sig: string
+    nonce: string
+    createdAt: number
+    expiresAt: number
+  }
   try {
-    res = await fetch(url, {
-      headers: { Authorization: `Bearer ${opts.apiKey}` },
+    signed = signRequest({
+      signingKeyHex: opts.signingKeyHex,
+      action: opts.action,
+      ttl: 600,
     })
   } catch (err) {
     return { status: 'error', message: (err as Error).message }
   }
-  if (!res.ok) {
-    return {
-      status: 'error',
-      message: `World returned ${res.status} fetching rp_context.`,
-    }
-  }
 
-  const body = (await res.json().catch(() => null)) as Record<
-    string,
-    unknown
-  > | null
-  // Guarding both a flat response and one nested under `rp_context`, since
-  // this endpoint's exact shape is inferred, not confirmed — see the module
-  // doc comment.
-  const rpContext = (body?.rp_context ?? body) as SignedRpContext | null
-  if (!rpContext?.signature) {
-    return {
-      status: 'error',
-      message: 'World did not return a signed rp_context.',
-    }
+  return {
+    status: 'ok',
+    rpContext: {
+      rp_id: opts.rpId,
+      nonce: signed.nonce,
+      created_at: signed.createdAt,
+      expires_at: signed.expiresAt,
+      signature: signed.sig,
+    },
   }
-  return { status: 'ok', rpContext }
 }
 
 export type WorldVerificationResult =

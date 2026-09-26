@@ -1522,3 +1522,72 @@ compiled in isolation). Biome clean on every touched file.
 Still unverified, flagged plainly: the `rp-context` endpoint's exact
 host/path/query-param shape. Everything else in this rewrite is now backed
 by installed source, not inference. Next step is Santino's live retest.
+
+### Fri 26 Sept — the rp-context guess was wrong, and wrong in an interesting way
+
+Live retest: `GET /world/rp-context` came back `502`, body
+`{"message":"World returned 404 fetching rp_context."}` — the guessed
+Portal-hosted `POST/GET .../api/v4/rp-context` endpoint doesn't exist. This
+is the one piece flagged as unverified in the previous entry, so finding out
+it was wrong isn't itself surprising. What it forced was a real architecture
+correction, not just a URL swap.
+
+Reread `@worldcoin/idkit-server@1.1.1`'s actual installed source (the
+package `verifyWorldProof`'s neighbor, already in the pnpm store) rather
+than trusting search results a second time on the same question. Its entire
+public surface is `signRequest({signingKeyHex, action?, ttl?})` — a *pure
+local computation* (EIP-191 signing over a nonce/timestamp payload,
+implemented in JS, no network call). There is no `fetchFromCloud()` or
+equivalent anywhere in the package. Three independent web searches (not
+just one, this time, on the strength of last entry's lesson) converged on
+the same shape of answer: an RP's signing key is shown once by the
+Developer Portal at RP-registration time, must be written to a server-only
+secret store immediately, and every RP — self-managed or not — signs
+`rp_context` locally with `signRequest()`. There is no "Portal signs it for
+you over HTTPS, authenticated by an API key" mechanism in the actual
+protocol. That was this module's own invention, built on a webset summary I
+couldn't independently check (`docs.world.org` blocked), and it doesn't
+survive contact with the SDK's real source or a live 404.
+
+Net effect on the "self-managed" near-miss from two entries ago: it's very
+likely a genuine non-issue for getting a signing key specifically — every
+RP appears to get a private key up front regardless, and "self-managed"
+gates something else (plausibly who submits the RP's own on-chain
+registration/rotation transaction, matching the dialog's specific wording
+about "on-chain transaction custody"). Still not independently confirmed
+against reachable docs, so still not clicking it — but the working theory
+changed from "maybe we do need that" to "probably unrelated to this
+problem."
+
+Rewrote `packages/world/src/index.ts` again: dropped `WORLD_API_KEY` and
+the whole cloud-fetch codepath; added `buildSignedRpContext()`, a
+synchronous function that calls `signRequest()` directly and maps its
+`{sig, nonce, createdAt, expiresAt}` onto `rp_context`'s
+`{signature, nonce, created_at, expires_at}` (plus the caller-supplied
+`rp_id`, a separate identifier from `app_id` — confirmed already in an
+earlier entry via the Portal's own UI showing both). `ttl: 600` (10
+minutes), generous because the real flow includes a person picking up their
+phone, not just a modal opening.
+
+Config/routes updated to match: `apps/service/src/config.ts` swaps
+`WORLD_API_KEY` for `WORLD_RP_ID` + `WORLD_RP_SIGNING_KEY` (no default on
+the key, same reasoning as `ENS_BACKEND_PRIVATE_KEY`); `GET /world/rp-context`
+in `app.ts` is no longer `async` in any meaningful sense — no `await` left
+in it, since there's no network call anymore. Added
+`@worldcoin/idkit-server` as a real dependency of `packages/world` (it was
+already sitting in the pnpm store as a neighbor package, now used directly).
+`.env.example` updated with what the key actually is and an explicit
+warning to never let it near `apps/web`'s env.
+
+`verifyWorldProof()` itself is untouched — that endpoint stays confirmed by
+the live "Action not found." → "responses array is required" progression
+from two entries back, which is real evidence, not inference.
+
+`pnpm -r build` clean across the workspace; Biome clean on every touched
+file. Two wrong guesses in a row on the same sub-problem (URL, then
+mechanism) is a bad streak, but this one is no longer a guess: the fix is
+built on `signRequest()`'s own confirmed signature, not a description of it.
+What Santino needs to do next: find the RP's signing key in the Developer
+Portal's World ID Configuration page (near where the RP ID is shown) and
+add it as `WORLD_RP_SIGNING_KEY` — asked him to screenshot what's there
+before adding anything, rather than guess a Portal UI flow a third time.

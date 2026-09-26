@@ -43,12 +43,15 @@ const schema = z.object({
   // apps/web's humanVerifier.ts — the same string is registered on the app.
   WORLD_APP_ID: z.string().default(''),
   WORLD_ACTION: z.string().default('chef-onboarding'),
-  // Authenticates GET /world/rp-context calls (see packages/world) — the
-  // Developer Portal's API Keys page, not the app id or a private key.
-  // Deliberately not self-managing the RP's own signing key: that switch is
-  // irreversible and hands over on-chain transaction custody, not just this
-  // signature.
-  WORLD_API_KEY: z.string().default(''),
+  // The RP id and RP signing key from the Developer Portal's World ID
+  // Configuration page — distinct from WORLD_APP_ID. Real, live testing
+  // (see docs/engineering-log.md, Fri 26 Sept) ruled out a Portal-hosted
+  // cloud-signing endpoint: `@worldcoin/idkit-server`'s `signRequest()` is
+  // the SDK's only signing path, and it needs this raw key locally, in
+  // apps/service, never in the browser. No default for the key, same
+  // reasoning as ENS_BACKEND_PRIVATE_KEY above.
+  WORLD_RP_ID: z.string().default(''),
+  WORLD_RP_SIGNING_KEY: z.string().default(''),
 
   // Comma-separated origins allowed to call this service from a browser.
   // Vite auto-increments past 5173 when the port's taken (5174, 5175, ...),

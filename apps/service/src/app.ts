@@ -1,4 +1,4 @@
-import { fetchSignedRpContext, verifyWorldProof } from '@sapore-pay/world'
+import { buildSignedRpContext, verifyWorldProof } from '@sapore-pay/world'
 import cors from 'cors'
 import express, { type Express } from 'express'
 import { createEnsChefClient } from './chain/ensChef.js'
@@ -17,14 +17,14 @@ export function createApp(config: Config): Express {
   })
 
   // IDKit's v4 protocol needs a freshly-signed rp_context before it can even
-  // open the verification widget — see packages/world's doc comment for why
-  // that's fetched from World here rather than us holding the RP's signing
-  // key. Fetched fresh per attempt (short expiry), so this is a GET, not
-  // something cached at startup.
-  app.get('/world/rp-context', async (_req, res) => {
-    const outcome = await fetchSignedRpContext({
-      apiKey: config.WORLD_API_KEY,
-      appId: config.WORLD_APP_ID,
+  // open the verification widget — signed locally with the RP's own key
+  // (see packages/world's doc comment for why there's no cloud alternative).
+  // Signed fresh per attempt (short expiry), so this is a GET, not something
+  // cached at startup.
+  app.get('/world/rp-context', (_req, res) => {
+    const outcome = buildSignedRpContext({
+      signingKeyHex: config.WORLD_RP_SIGNING_KEY,
+      rpId: config.WORLD_RP_ID,
       action: config.WORLD_ACTION,
     })
     if (outcome.status === 'error') {
