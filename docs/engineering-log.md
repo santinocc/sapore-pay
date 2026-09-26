@@ -1172,3 +1172,56 @@ lib either — same class of issue as `packages/core`'s earlier
 `TextEncoder`/`TextDecoder` fix, and fixed the same way: declare
 `@types/node` explicitly rather than relying on it arriving transitively.
 `pnpm -r build` and Biome both clean.
+
+### Fri 26 Sept — the real bug: viem's getEnsResolver doesn't know ENSv2 exists
+
+Santino confirmed he'd rebuilt `@sapore-pay/ens` and rerun the whole flow
+twice more (`french.sapore.eth`, `carlos.sapore.eth`), both freshly
+claimed for real, both still hitting "no resolver yet." 100% reproducible
+across different aliases is a different signature than an RPC-timing race
+— a race would be intermittent. That ruled out the previous entry's two
+fixes as the actual cause (they're still reasonable hygiene, just not
+what was failing here).
+
+Went back to first principles instead of guessing again: `writeChefRecords`
+was calling `publicClient.getEnsResolver({ name })` — viem's own built-in
+ENS action. Fetched the actual `ensdomains/contracts-v2` source from GitHub
+(not recalled from training) to check what that action is supposed to
+resolve through. `getEnsResolver` walks the **legacy** ENS Registry /
+Universal Resolver system — the one-contract-forever architecture ENSv1
+shipped with. ENSv2 (what this whole project is built on, per
+`SaporeChefRegistrar.sol`'s own `IPermissionedRegistry`/`IRegistry`
+imports) replaces that with per-parent registry contracts that the legacy
+Universal Resolver has no way to know about. So `getEnsResolver()` was
+never going to find anything here — not intermittently, not under any RPC
+provider, ever. It's not a race; it doesn't work for ENSv2 names at all.
+
+Fetched `IRegistry.sol` directly to find the real function:
+`getResolver(string calldata label) external view returns (address)`,
+callable directly on the specific registry contract that owns a name's
+parent (here, ENSv2's `UserRegistry` deployed for `sapore.eth`'s Chef
+subnames — `0x9a932e911c7FD7DfD54d1B11Ef4fE0c9aa46862d`, from
+`01-deploy-user-registry.mjs`). Rewrote `writeChefRecords()`
+(`packages/ens/src/chefRecords.ts`) to call that directly via
+`publicClient.readContract()` instead — passing the bare label (e.g.
+`"carlos"`), not the full dotted name, matching the real interface.
+Threaded a new `registryAddress` parameter through both callers:
+`apps/service`'s `ENS_REGISTRY` config (same default address) and
+`apps/web`'s new `VITE_ENS_REGISTRY` env var. Kept the retry loop from the
+previous entry — it's now retrying the *correct* call, so it still earns
+its keep against ordinary propagation jitter, just no longer papering
+over a lookup that could never have succeeded regardless.
+
+Honesty note: the previous entry's RPC-consistency and retry fixes were a
+plausible, reasoned hypothesis at the time, tested against real (if
+incomplete) evidence — but wrong. Recording that rather than quietly
+folding it into this entry, per this log's own standing rule about
+walked-back claims.
+
+`pnpm --filter @sapore-pay/ens build` and `pnpm -r build` both clean;
+Biome clean on every touched file. Not yet verified against the live
+chain from this sandbox — no network egress to any Sepolia RPC provider
+here (confirmed via the agent proxy's own status endpoint, same
+restriction noted earlier in this log), only to GitHub via WebFetch, which
+is how the interface itself got verified. Next real test is Santino's own
+machine.

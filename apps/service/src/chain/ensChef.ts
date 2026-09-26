@@ -80,6 +80,7 @@ export function createEnsChefClient(config: Config): EnsChefClient {
   })
   const registrarAddress = config.ENS_CHEF_REGISTRAR as `0x${string}`
   const resolverAddress = config.ENS_SHARED_RESOLVER as `0x${string}`
+  const registryAddress = config.ENS_REGISTRY as `0x${string}`
 
   const backendAccount = config.ENS_BACKEND_PRIVATE_KEY
     ? privateKeyToAccount(config.ENS_BACKEND_PRIVATE_KEY as `0x${string}`)
@@ -155,7 +156,13 @@ export function createEnsChefClient(config: Config): EnsChefClient {
 
     async writeRecords(fullName, records) {
       if (!walletClient) return { status: 'error', message: NOT_CONFIGURED }
-      return writeChefRecords(publicClient, walletClient, fullName, records)
+      return writeChefRecords(
+        publicClient,
+        walletClient,
+        fullName,
+        records,
+        registryAddress,
+      )
     },
   }
 }

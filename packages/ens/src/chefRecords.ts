@@ -15,8 +15,19 @@
  * resolver ABI, not a guess. What's ENSv2-specific is finding the RIGHT
  * resolver (each account gets its own instance now, there's no shared
  * Public Resolver to assume) and who's authorized to write to it (Enhanced
- * Access Control roles) — both handled below, per the guide's "Find the
- * Resolver" / "Who Can Write" sections.
+ * Access Control roles) — both handled below.
+ *
+ * Finding the resolver does NOT go through viem's built-in
+ * `getEnsResolver()` — confirmed by reading the actual deployed interface
+ * (`ensdomains/contracts-v2`'s `IRegistry.sol` on GitHub) rather than
+ * assumed: that helper resolves through the legacy ENS Registry /
+ * Universal Resolver system, which has no notion of ENSv2's new registry
+ * contracts at all, and returns null for every ENSv2 name regardless of
+ * RPC provider or timing — this was tried first and always failed
+ * identically. The real, verified function is `IRegistry.getResolver(string
+ * label) view returns (address)`, called directly on the specific registry
+ * that owns `sapore.eth`'s Chef subnames (`registryAddress` below, ENSv2's
+ * `UserRegistry` — see docs/engineering-log.md for how it was deployed).
  *
  * `setAddr(node, address)` is the ENSIP-9 default (coinType 60 / ETH
  * mainnet-shaped addresses — what every wallet reads first). The second
@@ -39,6 +50,17 @@ import { evmCoinType } from './coinType.js'
 /** Matches the app-wide TEMPO_CHAIN_ID assumption (see each app's .env.example). */
 const TEMPO_CHAIN_ID = 42431
 const TEMPO_COIN_TYPE = evmCoinType(TEMPO_CHAIN_ID)
+
+// Every name this package deals with is a Sapore Chef subname — this
+// package is inherently sapore.eth-specific already (see e.g. ensChef.ts's
+// own `${label}.sapore.eth`), so deriving the bare label back out of a full
+// name here makes an existing assumption explicit rather than adding a new
+// one.
+const PARENT_DOMAIN_SUFFIX = '.sapore.eth'
+
+const registryAbi = parseAbi([
+  'function getResolver(string label) view returns (address)',
+])
 
 const resolverAbi = parseAbi([
   'function setAddr(bytes32 node, address addr_)',
@@ -91,13 +113,21 @@ export async function writeChefRecords(
   walletClient: WalletClient,
   fullName: string,
   records: ChefRecords,
+  registryAddress: Address,
 ): Promise<WriteRecordsOutcome> {
   const name = normalize(fullName)
   const node = namehash(name)
+  const label = name.endsWith(PARENT_DOMAIN_SUFFIX)
+    ? name.slice(0, -PARENT_DOMAIN_SUFFIX.length)
+    : name
 
   let resolver: Address | null
   try {
-    resolver = await lookupResolverWithRetries(publicClient, name)
+    resolver = await lookupResolverWithRetries(
+      publicClient,
+      registryAddress,
+      label,
+    )
   } catch (err) {
     return { status: 'error', message: (err as Error).message }
   }
@@ -159,12 +189,16 @@ function encodeResolverCall(
 
 async function lookupResolverWithRetries(
   publicClient: PublicClient,
-  name: string,
+  registryAddress: Address,
+  label: string,
 ): Promise<Address | null> {
   for (let attempt = 1; attempt <= RESOLVER_LOOKUP_RETRIES; attempt++) {
-    const resolver = (await publicClient.getEnsResolver({
-      name,
-    })) as Address | null
+    const resolver = (await publicClient.readContract({
+      address: registryAddress,
+      abi: registryAbi,
+      functionName: 'getResolver',
+      args: [label],
+    })) as Address
     if (resolver && resolver !== '0x0000000000000000000000000000000000000000') {
       return resolver
     }

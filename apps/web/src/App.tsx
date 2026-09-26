@@ -47,6 +47,8 @@ import './theme.css'
 import './app.css'
 
 const SERVICE_URL = import.meta.env.VITE_SERVICE_URL ?? 'http://localhost:4000'
+const ENS_REGISTRY = (import.meta.env.VITE_ENS_REGISTRY ??
+  '0x9a932e911c7FD7DfD54d1B11Ef4fE0c9aa46862d') as `0x${string}`
 
 type ChefWallet = Extract<ChefWalletState, { status: 'ready' }>
 
@@ -119,6 +121,7 @@ export function App() {
       return createPrivyRecordWriter(
         chefWallet.publicClient,
         chefWallet.walletClient,
+        ENS_REGISTRY,
       )
     }
     return createSimulatedRecordWriter(recordScenario)

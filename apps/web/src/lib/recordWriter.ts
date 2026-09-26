@@ -91,9 +91,16 @@ export function createOnChainRecordWriter(opts: {
 export function createPrivyRecordWriter(
   publicClient: PublicClient,
   walletClient: WalletClient,
+  registryAddress: `0x${string}`,
 ): RecordWriter {
   return {
     write: (fullName, records) =>
-      writeChefRecords(publicClient, walletClient, fullName, records),
+      writeChefRecords(
+        publicClient,
+        walletClient,
+        fullName,
+        records,
+        registryAddress,
+      ),
   }
 }
