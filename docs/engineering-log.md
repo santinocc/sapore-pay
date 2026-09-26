@@ -1302,3 +1302,344 @@ successfully.
 
 Nothing left to fix from this run — recorded as the milestone it is, not
 folded silently into the next bug report.
+
+### Fri 26 Sept — real World ID, and a genuine SDK-version tradeoff caught in time
+
+With the PR merged and ~20 hours left before the ETHGlobal Tokyo submission
+deadline (Sun 09:00 JST), World ID was the last targeted-prize gap: `packages/world`
+was still a planning-comment stub, and `apps/web`'s onboarding step had been
+simulated all session.
+
+Started by installing `@worldcoin/idkit` to inspect its real types before
+writing anything — and it resolved to `4.3.0`, not the `app_id`/`action`/`signal`
+model the repo's own planning comment (and an initial web search) assumed.
+Reading the actual installed `.d.ts` files (not a webpage summary) showed v4 is
+a materially different protocol: every request requires a `rp_context` —
+a nonce/timestamp bundle that must be signed with an RP private key
+(`@worldcoin/idkit-server`'s `signRequest({ signingKeyHex, ... })`, confirmed
+by reading its own source) — plus a QR-code/polling flow (`connectorURI`,
+`pollUntilCompletion()`) in place of a simple modal callback.
+
+Checked `npm view @worldcoin/idkit versions` and found the real version
+history jumps straight from `2.4.2` to `4.0.0-dev.*` — no 3.x ever shipped.
+`2.4.2` is a real, currently-installable release with the classic
+widget/callback model, and v4 itself still ships `orbLegacy`/`deviceLegacy`
+presets documented as "for compatibility with older IDKit versions" — so old
+proofs remain first-class in the protocol, not a dead path.
+
+Given the deadline, flagged this tradeoff to Santino directly rather than
+picking silently: v2.4.2 (lower risk, well-documented, still fully real — not
+simulated) vs. v4 (current, but requires learning RP-signing live under time
+pressure, plus a rebuilt polling-based UX). He created the World app in the
+Developer Portal while this was being resolved; its Configuration page showed
+the RP's signer key is **Developer-Portal-managed by default** ("Switch to
+self-managed" is a separate opt-in danger-zone action) — which would have
+removed the signing concern specifically, but the QR/polling UX rebuild and
+the still-unconfirmed v4 server-verify shape remained. Session model was
+switched to Opus for this decision and the implementation that followed, on
+Santino's own call given the stakes; switched back to Sonnet once the design
+and hard verification work were done and what remained was mechanical.
+
+Went with **v2.4.2**. Installed it, then read its actual types rather than
+trust the same kind of summary that had just been wrong once already:
+`useIDKit()` for imperative open control, `IDKitWidget` (`app_id`, `action`,
+`signal`, `verification_level`, `handleVerify`, `onSuccess`, `onError`),
+`ISuccessResult` (`proof`, `merkle_root`, `nullifier_hash`,
+`verification_level`), and — the best find — `verifyCloudProof` exported from
+`@worldcoin/idkit-core/backend`, IDKit's own official server-verification
+helper, so `packages/world` didn't need a hand-rolled HTTP call to World's
+verify endpoint at all.
+
+Implemented:
+- `packages/world/src/index.ts` — replaced the stub with `verifyWorldProof()`,
+  calling `verifyCloudProof` and mapping World's own `max_verifications_reached`
+  code onto `already_registered` — that's World's per-action verification
+  limit doing the "one human, one Chef account" enforcement natively, which is
+  also why this module stores nothing: there's no local nullifier table to
+  keep in sync with World's own.
+- `apps/service`: new `WORLD_APP_ID`/`WORLD_ACTION` config (empty-string
+  default, same "report not configured rather than crash" pattern as
+  `ENS_BACKEND_PRIVATE_KEY`), and `POST /world/verify`, deliberately left
+  without auth — a caller can't forge a World proof, and a replayed one is
+  bound to its original `signal`, so the worst outcome of an unauthenticated
+  hit is being told your own real proof is valid.
+- `apps/web/src/lib/worldVerifier.tsx` (new) — the actual bridge work: IDKit
+  is a mounted component owning a modal, not an awaitable function, but
+  `ChefOnboarding` is built around `await verifier.verify(...)`. Wraps the
+  widget in a hook that opens it and returns a promise IDKit's own callbacks
+  settle. The one gap IDKit has no callback for — closing the modal without
+  acting — is caught by watching the widget's own `open` state transition
+  from true to false with a promise still pending; left unhandled, that's the
+  same "hangs on a spinner forever" class of bug the ENS claim screen hit
+  earlier this session, just in a new place.
+- `apps/web/src/App.tsx` — the World step now shares the same Real/Simulated
+  toggle as Claim/Payout, gated on `VITE_WORLD_APP_ID` being set (no dead
+  "Real" option that can only ever fail); the widget is mounted outside the
+  step switch since unmounting it mid-verification would strand the promise.
+
+`pnpm -r build` clean across all 9 workspace packages; Biome clean on every
+touched file (one real compiler catch along the way: an early draft read
+`.message` off a union where two of the three non-`verified` branches don't
+have one — fixed with an exhaustive switch instead of narrowing on `!==`).
+
+Not yet tested against a real phone/World App — that's Santino's next step,
+same "real chain, sandbox has no egress to it" limitation as ENSv2 and
+Privy before it.
+
+### Fri 26 Sept — a real proof, a real rejection, and a real protocol-version mismatch
+
+Santino tested on his phone: the World App side completed genuinely
+("Congratulations! You have successfully shared your proofs anonymously"),
+confirming the widget's app_id/action/signal config is correctly wired to
+World's real infrastructure. IDKit's own modal then showed "Verification
+Declined." Browser console gave the exact reason:
+`{code: 'failed_by_host_app', message: 'Action not found.'}` —
+`failed_by_host_app` is IDKit's code for "the app's own `handleVerify`
+threw," and the message is `verifyCloudProof`'s response forwarded through
+unchanged — so this was a real answer from World's server, not a local bug.
+
+Read `verifyCloudProof`'s actual shipped source (not just its `.d.ts`) to
+confirm its hardcoded default: `POST
+https://developer.worldcoin.org/api/v2/verify/{app_id}` — same domain
+regardless of "sandbox" vs "production", ruling out an environment-URL
+mismatch as the cause. Search results (not independently verified against
+World's own docs — `docs.world.org` is blocked from this sandbox's egress,
+confirmed via the agent proxy's own status endpoint) describe the *current*
+endpoint as `/api/v4/verify/{rp_id}`, with `app_id` "still accepted for
+backward compatibility." That lines up exactly with what the Developer
+Portal showed: this app has a separate RP ID (`rp_45bf...`) alongside its
+App ID, i.e. it was provisioned under the newer RP-based system — plausible
+that the legacy v2 endpoint simply has no visibility into actions on an
+RP-structured app at all, independent of whether the action itself is
+correctly named or configured.
+
+Fixed by overriding only `verifyCloudProof`'s `endpoint` parameter to
+`/api/v4/verify/{app_id}` on the same `developer.worldcoin.org` host —
+deliberately the smallest possible change (one URL, not also rewriting the
+request body) so a live retest isolates exactly one variable. Also added
+`WORLD_VERIFY_ENDPOINT_BASE` as an env override, since the domain/path here
+is the one thing in this module that's an informed inference, not something
+verified against installed source or a reachable spec — if this exact guess
+turns out wrong, it's a env change, not a redeploy, to correct.
+
+Same `@types/node` gap as `packages/ens`/`packages/core` earlier today —
+`packages/world` uses `process.env` for the override but had never declared
+the dependency. Fixed the same way. `pnpm -r build` clean across all 9
+packages; Biome clean.
+
+Honesty note: the exact v4 request body/domain is inferred from search
+results describing World's own docs, not read directly from them or from
+installed source — flagged as such rather than presented as verified,
+per this log's standing practice. Next real test tells us if the inference
+holds.
+
+### Fri 26 Sept — the v4 endpoint fix confirmed, and confirmed insufficient
+
+Retest on Santino's phone: the error changed from `Action not found.` to
+`responses array is required` — proof the URL fix from the previous entry
+was correct (the v4 endpoint is genuinely being hit now), but it also proved
+the real, fundamental problem: v2.4.2's client produces the old flat proof
+shape (`{proof, merkle_root, nullifier_hash, verification_level}`), and v4's
+endpoint wants `{responses: [...]}`. Not a reshape-in-place fix — the
+underlying ZK proof is cryptographically bound to different public inputs
+between protocol versions, so no amount of remapping the v2 shape produces
+a valid v4 body. The only real fix is a client-side rewrite onto v4's actual
+protocol.
+
+Santino confirmed committing to that rewrite (switched to Opus 5.5 for the
+harder protocol-reverse-engineering work, with standing instructions to keep
+going and only stop for a genuinely close call). One near-miss along the
+way: Santino was about to click "Switch to self-managed" in the Developer
+Portal on my earlier suggestion that it was needed to get an RP signing key
+for `rp_context`. Seeing the actual dialog (irreversible, hands over
+on-chain transaction custody for the RP, not just this signature) was enough
+to catch the mistake before it was clicked — redirected to the Portal's API
+Keys page instead, on search evidence that a Portal-hosted `GET /rp-context`
+endpoint, Bearer-authenticated, is the intended mechanism for an app that
+stays Developer-Portal-managed. Flagging this plainly: that endpoint's exact
+host/path/shape is still inference, not confirmed against reachable docs
+(`developer.world.org`/`docs.world.org` are both blocked from this sandbox)
+or installed source — a live test is what confirms or corrects it, same as
+the verify endpoint before it.
+
+This time, before writing any client code, read the actual installed
+`@worldcoin/idkit@4.3.0` and `@worldcoin/idkit-core@4.3.0` `.d.ts` files
+directly (both were already present in the pnpm store from the earlier
+`pnpm add @worldcoin/idkit@2.4.2` downgrade, which had pulled 4.3.0
+transitively first) rather than trusting search-summarized docs a second
+time. That confirmed, from real source, not inference:
+
+- `RpContext` (`rp_id`, `nonce`, `created_at`, `expires_at`, `signature`) —
+  matches what `fetchSignedRpContext()` already assumed, unchanged.
+- `IDKitRequestConfig.rp_context` is required, and `allow_legacy_proofs` is
+  a required boolean, not optional — set to `false` here (new app, no v3
+  nullifiers anywhere to reconcile).
+- `IDKitRequestWidget` is a controlled component (`open`/`onOpenChange`
+  props), not the `useIDKit()` hook v2.4.2 used — `open` is now a plain
+  `useState` in `worldVerifier.tsx`.
+- `proofOfHuman({ signal })` returns `{ type: "ProofOfHuman", signal }`,
+  matching the "Proof of Human" language already used across
+  `ChefOnboarding.tsx`.
+- `onError` receives an `IDKitErrorCodes` enum value directly (no
+  `{code, message}` object like v2 had) — includes a real `Cancelled`
+  member, though `onOpenChange(false)`-with-no-result is kept as the primary
+  cancellation signal (same reliable pattern as v2.4.2's ref-based version)
+  since it isn't confirmed IDKit fires both for a plain dismissal.
+- The v4 result's nullifier lives at `responses[0].nullifier`, confirming
+  `packages/world`'s `extractNullifier()` (written on the earlier, correct
+  inference) needed no changes.
+
+Rewrote, end to end:
+
+- `packages/world/src/index.ts` — dropped `verifyCloudProof` entirely.
+  `verifyWorldProof()` now forwards the raw v4 result unmodified; added
+  `fetchSignedRpContext()` calling the (still-inferred) Portal `rp-context`
+  endpoint with the new `WORLD_API_KEY`. Also dropped the now-unused
+  `@worldcoin/idkit-core` dependency.
+- `apps/service/src/config.ts` — added `WORLD_API_KEY`.
+- `apps/service/src/app.ts` — added `GET /world/rp-context`; updated
+  `POST /world/verify` to the new `{proof}`-only body (no more `signal` as a
+  separate field — it's already bound into the proof's `signal_hash` via the
+  preset that produced it).
+- `apps/web/package.json` — re-pinned `@worldcoin/idkit` to `^4.3.0`.
+- `apps/web/src/lib/worldVerifier.tsx` — full rewrite onto
+  `IDKitRequestWidget`/`proofOfHuman`/`rp_context`. `verify()` is now async:
+  it fetches a fresh `rp_context` from `apps/service` before opening the
+  widget, since each has a short expiry and can't be reused across attempts.
+  Nullifier extraction stays entirely server-side, as before.
+- Removed `VITE_WORLD_VERIFICATION_LEVEL`/`VerificationLevel` — that was a
+  v2/v3 concept (Orb vs Device credential selection) with no equivalent
+  surface in v4's exported API; `proofOfHuman()`'s own doc comment says it
+  requests "a World ID 4.0 proof-of-human credential with legacy Orb
+  fallback" on its own, so there's nothing left to select.
+- Fixed a stale doc comment in `humanVerifier.ts` still naming the old
+  `/api/v2/verify/{app_id}` endpoint.
+
+`pnpm -r build` clean across the full workspace (including `apps/web`'s own
+`tsc` pass — the v4 types checked out against real usage, not just
+compiled in isolation). Biome clean on every touched file.
+
+Still unverified, flagged plainly: the `rp-context` endpoint's exact
+host/path/query-param shape. Everything else in this rewrite is now backed
+by installed source, not inference. Next step is Santino's live retest.
+
+### Fri 26 Sept — the rp-context guess was wrong, and wrong in an interesting way
+
+Live retest: `GET /world/rp-context` came back `502`, body
+`{"message":"World returned 404 fetching rp_context."}` — the guessed
+Portal-hosted `POST/GET .../api/v4/rp-context` endpoint doesn't exist. This
+is the one piece flagged as unverified in the previous entry, so finding out
+it was wrong isn't itself surprising. What it forced was a real architecture
+correction, not just a URL swap.
+
+Reread `@worldcoin/idkit-server@1.1.1`'s actual installed source (the
+package `verifyWorldProof`'s neighbor, already in the pnpm store) rather
+than trusting search results a second time on the same question. Its entire
+public surface is `signRequest({signingKeyHex, action?, ttl?})` — a *pure
+local computation* (EIP-191 signing over a nonce/timestamp payload,
+implemented in JS, no network call). There is no `fetchFromCloud()` or
+equivalent anywhere in the package. Three independent web searches (not
+just one, this time, on the strength of last entry's lesson) converged on
+the same shape of answer: an RP's signing key is shown once by the
+Developer Portal at RP-registration time, must be written to a server-only
+secret store immediately, and every RP — self-managed or not — signs
+`rp_context` locally with `signRequest()`. There is no "Portal signs it for
+you over HTTPS, authenticated by an API key" mechanism in the actual
+protocol. That was this module's own invention, built on a webset summary I
+couldn't independently check (`docs.world.org` blocked), and it doesn't
+survive contact with the SDK's real source or a live 404.
+
+Net effect on the "self-managed" near-miss from two entries ago: it's very
+likely a genuine non-issue for getting a signing key specifically — every
+RP appears to get a private key up front regardless, and "self-managed"
+gates something else (plausibly who submits the RP's own on-chain
+registration/rotation transaction, matching the dialog's specific wording
+about "on-chain transaction custody"). Still not independently confirmed
+against reachable docs, so still not clicking it — but the working theory
+changed from "maybe we do need that" to "probably unrelated to this
+problem."
+
+Rewrote `packages/world/src/index.ts` again: dropped `WORLD_API_KEY` and
+the whole cloud-fetch codepath; added `buildSignedRpContext()`, a
+synchronous function that calls `signRequest()` directly and maps its
+`{sig, nonce, createdAt, expiresAt}` onto `rp_context`'s
+`{signature, nonce, created_at, expires_at}` (plus the caller-supplied
+`rp_id`, a separate identifier from `app_id` — confirmed already in an
+earlier entry via the Portal's own UI showing both). `ttl: 600` (10
+minutes), generous because the real flow includes a person picking up their
+phone, not just a modal opening.
+
+Config/routes updated to match: `apps/service/src/config.ts` swaps
+`WORLD_API_KEY` for `WORLD_RP_ID` + `WORLD_RP_SIGNING_KEY` (no default on
+the key, same reasoning as `ENS_BACKEND_PRIVATE_KEY`); `GET /world/rp-context`
+in `app.ts` is no longer `async` in any meaningful sense — no `await` left
+in it, since there's no network call anymore. Added
+`@worldcoin/idkit-server` as a real dependency of `packages/world` (it was
+already sitting in the pnpm store as a neighbor package, now used directly).
+`.env.example` updated with what the key actually is and an explicit
+warning to never let it near `apps/web`'s env.
+
+`verifyWorldProof()` itself is untouched — that endpoint stays confirmed by
+the live "Action not found." → "responses array is required" progression
+from two entries back, which is real evidence, not inference.
+
+`pnpm -r build` clean across the workspace; Biome clean on every touched
+file. Two wrong guesses in a row on the same sub-problem (URL, then
+mechanism) is a bad streak, but this one is no longer a guess: the fix is
+built on `signRequest()`'s own confirmed signature, not a description of it.
+What Santino needs to do next: find the RP's signing key in the Developer
+Portal's World ID Configuration page (near where the RP ID is shown) and
+add it as `WORLD_RP_SIGNING_KEY` — asked him to screenshot what's there
+before adding anything, rather than guess a Portal UI flow a third time.
+
+### Fri 26 Sept — rp_context signing works; the next wall was Vite, not World
+
+Santino rotated the RP signer key in the Developer Portal ("Generate new
+key" — the non-destructive rotation, not "Switch to self-managed"), put it
+in `apps/service/.env` as `WORLD_RP_SIGNING_KEY`, and confirmed locally
+that the key derives to the same address the Portal shows as the new RP
+Signer (`0x9A9C...0055`) — checked with a one-liner that prints only the
+derived address, never the key. Retest: `GET /world/rp-context` → 200. The
+local-signing fix from the previous entry is confirmed by a live request.
+
+The widget then opened and immediately closed with `generic_error`.
+IDKit's React flow (`useIDKitFlow` in the installed dist) maps any
+unrecognised exception to `GenericError` and only logs the real one when
+`isDebug()` is true — which reads `window.IDKIT_DEBUG`. Setting that from
+the console (no code change) surfaced it:
+`Failed to initialize IDKit WASM: CompileError: WebAssembly.instantiate():
+expected magic word 00 61 73 6d, found 3c 21 64 6f`. `3c 21 64 6f` is
+`<!do` — the browser was handed `index.html` where it expected WASM.
+
+Cause: `@worldcoin/idkit-core` locates its WASM with `new
+URL("idkit_wasm_bg.wasm", import.meta.url)`. Vite's dev pre-bundler moves
+the JS into `node_modules/.vite/deps/` but not the `.wasm`, so that URL
+404s and Vite's SPA fallback answers with `index.html` (the Network tab's
+"idkit_wasm_bg.wasm 200, 1.1 kB" was the HTML page, in hindsight). Fix:
+`optimizeDeps.exclude: ['@worldcoin/idkit-core']` in `apps/web/vite.config.ts`
+— the pre-bundled `@worldcoin/idkit` wrapper then imports core from its real
+`node_modules` location, where the relative URL resolves. Verified against
+a real dev server in the sandbox before pushing, not just reasoned about:
+old path's first bytes `3c 21 64 6f` (Santino's exact error), new path's
+`00 61 73 6d`, `application/wasm`, 895 KB. `vite build` was never affected
+(it already emits `idkit_wasm_bg-*.wasm` as an asset), so this is
+dev-only — deployment doesn't need it, but it doesn't hurt either.
+
+### Fri 26 Sept — first real World ID 4.0 verification, end to end
+
+After the Vite fix (fresh `--force` dep cache), the IDKit v4 widget stayed
+open with a real QR (`connectorURI: https://world.org/verify?...`). Santino
+scanned it with World App, approved, and the app landed on "VERIFIED —
+You're a Chef" with `nullifier · 0x0a569e2c…863598`. That screen is only
+reachable when `apps/service`'s `POST /world/verify` gets an OK from
+World's `/api/v4/verify/{app_id}`, and the nullifier is read from the v4
+result's `responses[0].nullifier` — not the `'unknown'` fallback, not the
+simulator's `0x7c4f…`. So every link is now confirmed by a live run rather
+than inference: locally signed `rp_context` (rotated Portal signer key) →
+v4 widget + WASM → World App proof → server-side v4 verify.
+
+Still to exercise live: the rejection path. A second proof from the same
+person for `chef-onboarding` should come back `max_verifications_reached`
+and land on the "already a Chef" screen — assuming the action's
+verification limit in the Portal is set to one, which hasn't been checked
+directly.

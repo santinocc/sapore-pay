@@ -36,6 +36,23 @@ const schema = z.object({
     .string()
     .default('0x9a932e911c7FD7DfD54d1B11Ef4fE0c9aa46862d'),
 
+  // World ID — the app and action registered in the Developer Portal.
+  // No default for the app id, deliberately: an unconfigured deployment must
+  // report that it is unconfigured rather than quietly verifying everyone
+  // (see packages/world). WORLD_ACTION matches CHEF_ONBOARDING_ACTION in
+  // apps/web's humanVerifier.ts — the same string is registered on the app.
+  WORLD_APP_ID: z.string().default(''),
+  WORLD_ACTION: z.string().default('chef-onboarding'),
+  // The RP id and RP signing key from the Developer Portal's World ID
+  // Configuration page — distinct from WORLD_APP_ID. Real, live testing
+  // (see docs/engineering-log.md, Fri 26 Sept) ruled out a Portal-hosted
+  // cloud-signing endpoint: `@worldcoin/idkit-server`'s `signRequest()` is
+  // the SDK's only signing path, and it needs this raw key locally, in
+  // apps/service, never in the browser. No default for the key, same
+  // reasoning as ENS_BACKEND_PRIVATE_KEY above.
+  WORLD_RP_ID: z.string().default(''),
+  WORLD_RP_SIGNING_KEY: z.string().default(''),
+
   // Comma-separated origins allowed to call this service from a browser.
   // Vite auto-increments past 5173 when the port's taken (5174, 5175, ...),
   // hence the range rather than one fixed port.

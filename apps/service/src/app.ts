@@ -1,3 +1,4 @@
+import { buildSignedRpContext, verifyWorldProof } from '@sapore-pay/world'
 import cors from 'cors'
 import express, { type Express } from 'express'
 import { createEnsChefClient } from './chain/ensChef.js'
@@ -13,6 +14,42 @@ export function createApp(config: Config): Express {
 
   app.get('/health', (_req, res) => {
     res.json({ status: 'ok', service: 'sapore-pay' })
+  })
+
+  // IDKit's v4 protocol needs a freshly-signed rp_context before it can even
+  // open the verification widget — signed locally with the RP's own key
+  // (see packages/world's doc comment for why there's no cloud alternative).
+  // Signed fresh per attempt (short expiry), so this is a GET, not something
+  // cached at startup.
+  app.get('/world/rp-context', (_req, res) => {
+    const outcome = buildSignedRpContext({
+      signingKeyHex: config.WORLD_RP_SIGNING_KEY,
+      rpId: config.WORLD_RP_ID,
+      action: config.WORLD_ACTION,
+    })
+    if (outcome.status === 'error') {
+      res.status(502).json({ message: outcome.message })
+      return
+    }
+    res.json(outcome.rpContext)
+  })
+
+  // The trust decision for "is this a unique human", made here and never in
+  // the browser. apps/web's IDKit widget produces the proof; this route is
+  // what asks World whether it's real. Unlike the ENS routes below, this one
+  // needs no auth to be safe: a caller can't forge a World proof, and a
+  // replayed one is bound to the rp_context/action it was requested against.
+  app.post('/world/verify', async (req, res) => {
+    const { proof } = req.body ?? {}
+    if (!proof || typeof proof !== 'object') {
+      res.status(400).json({ message: 'proof is required.' })
+      return
+    }
+    const outcome = await verifyWorldProof({
+      appId: config.WORLD_APP_ID,
+      proof,
+    })
+    res.json(outcome)
   })
 
   // Backs apps/web's createOnChainSubnameClaimer — see its doc comment for
