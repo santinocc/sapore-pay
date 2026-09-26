@@ -130,8 +130,8 @@ function InputForm({
       </p>
       {locked && (
         <p className="ec-lede">
-          This is the wallet you signed in with — the same one that claimed{' '}
-          {fullName}. Payouts always go here.
+          Payouts always go to the wallet that claimed {fullName} — the one
+          you're signed in with right now.
         </p>
       )}
       <form
@@ -141,7 +141,9 @@ function InputForm({
         }}
       >
         {locked ? (
-          <p className="ec-mono">{value}</p>
+          <p className="ec-mono-inline" title={value}>
+            {shorten(value)}
+          </p>
         ) : (
           <input
             className="ec-input ec-input--wide"
@@ -238,4 +240,8 @@ function ErrorState({
       </button>
     </Card>
   )
+}
+
+function shorten(address: string) {
+  return `${address.slice(0, 6)}…${address.slice(-4)}`
 }

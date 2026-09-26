@@ -19,9 +19,15 @@ type ReadyChefWallet = Extract<ChefWalletState, { status: 'ready' }>
 export function WalletConnect({
   onReady,
   continueLabel = 'Continue to claim your name',
+  chefName,
 }: {
   onReady: (wallet: ReadyChefWallet) => void
   continueLabel?: string
+  /** The Chef's already-claimed `<alias>.sapore.eth`, when one exists. Once
+   * a name is claimed it's the identity that matters — the raw address
+   * becomes a secondary detail, not the headline. Omit before a name is
+   * claimed, since there's nothing yet to show instead of the address. */
+  chefName?: string
 }) {
   const { login, logout } = usePrivy()
   const { createWallet } = useCreateWallet()
@@ -38,6 +44,7 @@ export function WalletConnect({
   return (
     <Ready
       address={state.address}
+      chefName={chefName}
       continueLabel={continueLabel}
       onContinue={() => onReady(state)}
       onLogout={logout}
@@ -128,11 +135,13 @@ function NeedsWallet({
 
 function Ready({
   address,
+  chefName,
   continueLabel,
   onContinue,
   onLogout,
 }: {
   address: `0x${string}`
+  chefName?: string
   continueLabel: string
   onContinue: () => void
   onLogout: () => void
@@ -140,11 +149,17 @@ function Ready({
   return (
     <Card tone="ok">
       <p className="wc-eyebrow wc-eyebrow--ok">Wallet ready</p>
-      <h1 className="wc-title">You're signed in</h1>
+      <h1 className="wc-title">
+        {chefName ? `Signed in as ${chefName}` : "You're signed in"}
+      </h1>
       <p className="wc-lede">
-        This is the address your ENS name and payout records will use.
+        {chefName
+          ? 'Payout records for this name use this wallet.'
+          : 'This is the address your ENS name and payout records will use.'}
       </p>
-      <p className="wc-mono">{shorten(address)}</p>
+      <p className="wc-mono" title={address}>
+        {shorten(address)}
+      </p>
       <button
         type="button"
         className="wc-btn wc-btn--primary"

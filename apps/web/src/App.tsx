@@ -157,6 +157,7 @@ export function App() {
                 ? 'Continue to set payout address'
                 : 'Continue to claim your name'
             }
+            chefName={step.kind === 'payout' ? step.fullName : undefined}
           />
         )}
         {step.kind === 'ens-claim' && !needsWallet && (

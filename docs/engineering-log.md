@@ -921,3 +921,34 @@ already gives the owner address (never shown as editable there either).
 Simulated mode (`defaultAddress === ''`, no real wallet to fix it to)
 keeps the free-text input, since it's only exercising demo scenarios, not
 a real address. `pnpm build` and Biome both clean.
+
+### Fri 26 Sept — ENS name, not the raw address, is the identity once claimed
+
+Santino proposed a broader identity rule: before a Chef claims a name, the
+raw Privy address is all there is, so it's fine to show it. Once
+`<alias>.sapore.eth` exists, though, that name — not the `0x...` address
+underneath it — should be what the product shows as "you" everywhere;
+the raw address becomes a small, copyable secondary detail, not the
+headline.
+
+`EnsClaim`'s own "Claimed" screen already worked this way (leads with
+`{fullName} is yours`, no address shown at all). Two other screens didn't:
+
+- `WalletConnect`'s "Ready" card, reused as the wallet gate ahead of the
+  Payout step, only ever showed the raw address ("You're signed in" +
+  `0x0b2a...a6a2`) — it had no way to know a name had already been
+  claimed by that point in the flow.
+- `PayoutRecords`'s locked address display (added earlier today) showed
+  the full untruncated `0x...` value in a bordered box — technically
+  correct but visually competing with the ENS name already in the H1
+  above it.
+
+Fixed both: `WalletConnect` takes an optional `chefName` prop — when
+`App.tsx` passes the already-claimed `fullName` (only possible once
+`step.kind === 'payout'`; there's nothing to pass before a name exists),
+the card reads "Signed in as `<name>`" with the address shrunk to a
+shortened, `title`-attributed secondary line, matching its existing
+`.wc-mono` (small, faint) styling. `PayoutRecords`'s locked value moved
+from `.ec-mono` (bordered box, full address) to `.ec-mono-inline`
+(shortened, same treatment `addr(60)` already gets inline in the copy
+above it) for the same reason. `pnpm build` and Biome both clean.
