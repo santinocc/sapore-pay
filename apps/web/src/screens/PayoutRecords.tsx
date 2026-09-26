@@ -122,18 +122,16 @@ function InputForm({
   return (
     <Card>
       <p className="ec-eyebrow">Payout address</p>
-      <h1 className="ec-title">Where should {fullName} get paid?</h1>
+      <h1 className="ec-title">
+        {locked
+          ? `You'll get paid to your ${fullName} wallet`
+          : `Where should ${fullName} get paid?`}
+      </h1>
       <p className="ec-lede">
         Written to <span className="ec-mono-inline">addr(60)</span> and to the
         Tempo-specific record (ENSIP-11) in one transaction, so both resolve to
         the same wallet from the moment either is read.
       </p>
-      {locked && (
-        <p className="ec-lede">
-          Payouts always go to the wallet that claimed {fullName} — the one
-          you're signed in with right now.
-        </p>
-      )}
       <form
         onSubmit={(e) => {
           e.preventDefault()

@@ -952,3 +952,15 @@ shortened, `title`-attributed secondary line, matching its existing
 from `.ec-mono` (bordered box, full address) to `.ec-mono-inline`
 (shortened, same treatment `addr(60)` already gets inline in the copy
 above it) for the same reason. `pnpm build` and Biome both clean.
+
+### Fri 26 Sept — payout heading shouldn't ask a question it already answered
+
+Santino pointed out that once the address is locked, "Where should
+mario.sapore.eth get paid?" is the wrong register — nothing is being
+asked, since there's no choice left to make. Changed the H1 to a
+statement in the locked case ("You'll get paid to your mario.sapore.eth
+wallet"), dropped the now-redundant explanatory paragraph underneath it
+(the statement already says what that paragraph was there to clarify),
+and kept the original question form for Simulated mode, where typing an
+address is still a real choice being made. `pnpm build` and Biome both
+clean.
